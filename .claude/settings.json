@@ -1,0 +1,67 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_FILE_PATH\"; case \"$f\" in *.js) node --check \"$f\" 2>&1 || echo \"SYNTAX_WARN: $f\";; esac"
+          },
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_FILE_PATH\"; case \"$f\" in *.js|*.html) grep -nE 'console\\.log|TODO|FIXME' \"$f\" 2>/dev/null | head -20 || true;; esac"
+          },
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_FILE_PATH\"; case \"$f\" in public/*.html) if grep -nE '>[A-Z][a-zA-Z][a-zA-Z ,.!?]{4,}<' \"$f\" | grep -v 'data-copy-key\\|<script\\|<style\\|<!--' | head -5 | grep .; then echo 'COPY_WARN: possible hardcoded user-facing copy in HTML — all strings should come from config.copy.* via the API payload'; fi;; esac"
+          },
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_FILE_PATH\"; case \"$f\" in *server.js) grep -nE \"\\\\$\\\\{[^}]*req\\\\.\" \"$f\" && echo 'SECURITY_WARN: possible SQL injection via template literal touching req.* — use sqlParam() + parameterized queries' || true;; esac"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" 2>/dev/null && node --check server.js 2>&1 && echo 'server.js: syntax OK' || echo 'STOP_WARN: server.js has syntax errors'"
+          },
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" 2>/dev/null && (npm test --silent 2>&1 | tail -20) || echo 'TEST_STOP_WARN: npm test failed or not configured'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if printf '%s' \"$CLAUDE_TOOL_INPUT\" | grep -qE 'rm -rf /|rm -rf \\*|DROP TABLE|TRUNCATE TABLE'; then echo 'DANGEROUS_COMMAND_BLOCKED: rm -rf on root/glob, DROP/TRUNCATE TABLE. Get explicit user approval first.'; exit 1; fi"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read(//Users/angam/invite-app/**)",
+      "Edit(//Users/angam/invite-app/**)",
+      "Write(//Users/angam/invite-app/**)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm start:*)",
+      "Bash(npm test:*)",
+      "Bash(node:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ]
+  }
+}

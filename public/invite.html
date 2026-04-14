@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <title data-copy-key="appName">&nbsp;</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='28' fill='%238b6f47'/></svg>"/>
+  <style id="theme-vars">
+    :root { --bg:#faf7f2; --fg:#1a1a1a; --accent:#8b6f47; --muted:#6b6b6b; --card:rgba(255,255,255,.7); --radius:14px; --max:680px;
+      --font-heading:'Playfair Display', Georgia, serif;
+      --font-body:'Inter', system-ui, sans-serif;
+    }
+    *,*::before,*::after { box-sizing:border-box; }
+    html,body { margin:0; padding:0; }
+    body {
+      background: var(--bg); color: var(--fg);
+      font-family: var(--font-body);
+      min-height:100dvh; line-height:1.55;
+      -webkit-font-smoothing:antialiased;
+    }
+    a { color: var(--accent); }
+    main.wrap { max-width: var(--max); margin: 0 auto; padding: clamp(16px, 4vw, 40px); }
+    h1,h2,h3 { font-family: var(--font-heading); font-weight: 500; letter-spacing:.01em; }
+    h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); line-height:1.15; margin: 0 0 .3em; }
+    h2 { font-size: clamp(1.2rem, 3vw, 1.5rem); margin: 1.6rem 0 .6rem; }
+    .muted { color: var(--muted); }
+    .eyebrow { font-size:.78rem; letter-spacing:.24em; text-transform:uppercase; color: var(--accent); margin: 0 0 .6em; font-weight:600; }
+    .card {
+      background: var(--card);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(0,0,0,.06);
+      border-radius: var(--radius);
+      padding: clamp(14px, 3.2vw, 22px);
+      margin: 18px 0;
+    }
+    .hero-media { width:100%; aspect-ratio: auto; max-height: 80dvh; object-fit: contain; border-radius: var(--radius); display:block; background: #00000010; }
+    .hero-media.pdf-stage { background: transparent; }
+    .hidden { display:none !important; }
+    .btn {
+      display:inline-block; appearance:none; border:0; cursor:pointer;
+      font: inherit; font-weight:600;
+      padding: .75em 1.1em; border-radius: 999px;
+      background: var(--accent); color:#fff;
+      text-decoration: none;
+      transition: transform .15s ease, opacity .15s ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn.ghost { background: transparent; color: var(--fg); border:1px solid rgba(0,0,0,.15); }
+    .btn.small { padding:.5em .8em; font-size:.9em; }
+    .row { display:flex; flex-wrap:wrap; gap: 10px; }
+    .grid { display:grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .event { padding: 14px; border: 1px solid rgba(0,0,0,.08); border-radius: var(--radius); background: rgba(255,255,255,.55); }
+    .event h3 { margin: 0 0 .25em; font-size: 1.15rem; }
+    .event .meta { color: var(--muted); font-size:.9em; margin: .3em 0 .6em; }
+    .chip { display:inline-block; padding:.2em .6em; border-radius: 999px; background: rgba(0,0,0,.06); font-size:.78em; margin-right:.4em; }
+    form.rsvp { display:grid; gap: 12px; }
+    form.rsvp label { display:grid; gap: 4px; font-size:.92em; color: var(--muted); }
+    form.rsvp input, form.rsvp select, form.rsvp textarea {
+      font: inherit; color: var(--fg);
+      padding: .6em .8em; border:1px solid rgba(0,0,0,.18); border-radius: 10px;
+      background: rgba(255,255,255,.8);
+    }
+    form.rsvp textarea { min-height: 80px; resize: vertical; }
+    .status-options { display:flex; flex-wrap:wrap; gap:8px; }
+    .status-options label { display:flex; align-items:center; gap:6px; padding:.45em .8em; border:1px solid rgba(0,0,0,.15); border-radius:999px; cursor:pointer; color: var(--fg); }
+    .status-options input[type=radio] { accent-color: var(--accent); }
+    .event-grid-rsvp { display:grid; gap:10px; }
+    .event-row { display:flex; justify-content:space-between; align-items:center; gap: 10px; padding:.5em .7em; border:1px solid rgba(0,0,0,.08); border-radius: 10px; background: rgba(255,255,255,.5); }
+    .event-row .seg { display:flex; gap:6px; }
+    .event-row .seg button { appearance:none; border:1px solid rgba(0,0,0,.15); background:transparent; padding:.35em .7em; border-radius:999px; font-size:.82em; cursor:pointer; color: var(--fg); }
+    .event-row .seg button.active { background: var(--accent); color:#fff; border-color: var(--accent); }
+    .hosts { display:flex; flex-wrap:wrap; gap:10px; }
+    .host { padding:.35em .8em; border-radius:999px; background:rgba(0,0,0,.05); font-size:.9em; }
+    .pager { display:flex; justify-content:center; gap:10px; margin-top:8px; }
+    .pager button { appearance:none; border:1px solid rgba(0,0,0,.2); background:transparent; color:var(--fg); padding:.35em .7em; border-radius:999px; cursor:pointer; }
+    .not-found { text-align:center; padding: 40px 20px; }
+    @media (prefers-color-scheme: dark) {
+      :root.dm-auto { --bg:#0f0f10; --fg:#f2eee7; --muted:#a9a6a0; --card:rgba(30,30,30,.55); }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap" id="app">
+    <div class="card"><p class="muted" data-copy-key="loading">Loading\u2026</p></div>
+  </main>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const qs  = (s, r=document) => r.querySelector(s);
+    const ce  = (tag, attrs={}, children=[]) => {
+      const el = document.createElement(tag);
+      for (const [k,v] of Object.entries(attrs)) {
+        if (k === 'class') el.className = v;
+        else if (k === 'html') el.innerHTML = v;
+        else if (k === 'text') el.textContent = v;
+        else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+        else if (v !== undefined && v !== null && v !== false) el.setAttribute(k, v);
+      }
+      for (const c of [].concat(children)) if (c != null) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+      return el;
+    };
+
+    function applyTheme(theme) {
+      if (!theme) return;
+      const root = document.documentElement;
+      if (theme.colorBg)     root.style.setProperty('--bg',     theme.colorBg);
+      if (theme.colorFg)     root.style.setProperty('--fg',     theme.colorFg);
+      if (theme.colorAccent) root.style.setProperty('--accent', theme.colorAccent);
+      if (theme.colorMuted)  root.style.setProperty('--muted',  theme.colorMuted);
+      if (theme.colorCard)   root.style.setProperty('--card',   theme.colorCard);
+      if (theme.fontHeading) root.style.setProperty('--font-heading', theme.fontHeading);
+      if (theme.fontBody)    root.style.setProperty('--font-body',    theme.fontBody);
+      if (theme.radius)      root.style.setProperty('--radius', theme.radius);
+      if (theme.maxWidth)    root.style.setProperty('--max',    theme.maxWidth);
+    }
+
+    function getToken() {
+      const u = new URL(window.location.href);
+      return u.searchParams.get('token') || '';
+    }
+
+    async function fetchPayload() {
+      const token = getToken();
+      const url = '/api/public-invite' + (token ? `?token=${encodeURIComponent(token)}` : '');
+      const r = await fetch(url);
+      if (!r.ok) return { ok: false, error: 'Network error' };
+      return r.json();
+    }
+
+    function pickHeroAsset(payload) {
+      const assets = payload.assets || {};
+      const heroes = (assets.byRole && assets.byRole.hero) || [];
+      return heroes[0] || null;
+    }
+
+    function renderHero(asset, title, subtitle, copy) {
+      const wrap = ce('section', { class: 'card' });
+      if (asset) {
+        if (asset.mime && asset.mime.startsWith('video/')) {
+          wrap.appendChild(ce('video', { class: 'hero-media', src: `/api/asset/${asset.id}/full`, controls: 'controls', playsinline: 'playsinline', preload: 'metadata' }));
+        } else if (asset.mime === 'application/pdf') {
+          const img = ce('img', { class: 'hero-media pdf-stage', src: `/api/asset/${asset.id}/full`, alt: title });
+          wrap.appendChild(img);
+          if (asset.pageCount > 1) {
+            const pager = ce('div', { class: 'pager' });
+            pager.appendChild(ce('a', { class: 'btn small ghost', href: `/api/asset/${asset.id}/original`, target: '_blank', rel: 'noopener',
+              text: (copy && copy.downloadItinerary) || 'Open full invite' }));
+            wrap.appendChild(pager);
+          }
+        } else {
+          wrap.appendChild(ce('img', { class: 'hero-media', src: `/api/asset/${asset.id}/full`, alt: title, loading: 'eager' }));
+        }
+      } else {
+        wrap.appendChild(ce('p', { class: 'eyebrow', text: (copy && copy.inviteHeaderCta) || 'You\u2019re Invited' }));
+        if (title)    wrap.appendChild(ce('h1', { text: title }));
+        if (subtitle) wrap.appendChild(ce('p',  { class: 'muted', text: subtitle }));
+        if (copy && copy.heroFallback) wrap.appendChild(ce('p', { text: copy.heroFallback }));
+      }
+      return wrap;
+    }
+
+    function renderDetails(event, copy) {
+      if (!event) return null;
+      const anyContent = [event.title, event.hostedBy, event.dateLabel, event.timeLabel,
+                         event.venue, event.address, event.city, event.mapsUrl,
+                         event.dressCode, event.giftRegistry, event.contactEmail,
+                         event.contactPhone, event.rsvpDeadline].some(v => v && String(v).trim());
+      if (!anyContent) return null;
+
+      const card = ce('section', { class: 'card' });
+      card.appendChild(ce('h2', { text: copy.detailsHeader || 'Details' }));
+
+      const row = (label, value) => {
+        if (!value) return null;
+        return ce('p', {}, [
+          ce('span', { class: 'muted', text: `${label}: ` }),
+          ce('span', { text: String(value) }),
+        ]);
+      };
+
+      [
+        row('Date', [event.dateLabel, event.timeLabel].filter(Boolean).join(' \u00b7 ')),
+        row('Venue', [event.venue, event.address, event.city].filter(Boolean).join(', ')),
+        row('Dress Code', event.dressCode),
+        row('RSVP by', event.rsvpDeadline),
+      ].forEach(el => { if (el) card.appendChild(el); });
+
+      const actions = ce('div', { class: 'row', style: 'margin-top:8px;' });
+      if (event.mapsUrl)      actions.appendChild(ce('a', { class: 'btn small ghost', href: event.mapsUrl, target: '_blank', rel: 'noopener', text: 'Open map' }));
+      if (event.giftRegistry) actions.appendChild(ce('a', { class: 'btn small ghost', href: event.giftRegistry, target: '_blank', rel: 'noopener', text: copy.giftRegistryLink || 'Gift Registry' }));
+      if (actions.children.length) card.appendChild(actions);
+
+      return card;
+    }
+
+    function renderHosts(hosts, copy) {
+      if (!hosts || !hosts.length) return null;
+      const card = ce('section', { class: 'card' });
+      card.appendChild(ce('h2', { text: copy.hostsHeader || 'Hosted By' }));
+      const strip = ce('div', { class: 'hosts' });
+      for (const h of hosts) strip.appendChild(ce('span', { class: 'host', text: h.label || h.id }));
+      card.appendChild(strip);
+      return card;
+    }
+
+    function renderEvents(events, copy, features) {
+      if (!events || events.length <= 1) return null;
+      const card = ce('section', { class: 'card' });
+      card.appendChild(ce('h2', { text: copy.eventsHeader || 'Events' }));
+      const grid = ce('div', { class: 'grid' });
+      for (const ev of events) {
+        const box = ce('div', { class: 'event' });
+        box.appendChild(ce('h3', { text: ev.name }));
+        const metaBits = [ev.dateLabel, ev.timeLabel, ev.venue].filter(Boolean).join(' \u00b7 ');
+        if (metaBits) box.appendChild(ce('div', { class: 'meta', text: metaBits }));
+        if (ev.description) box.appendChild(ce('p', { text: ev.description }));
+        const actions = ce('div', { class: 'row' });
+        if (ev.mapsUrl) actions.appendChild(ce('a', { class: 'btn small ghost', href: ev.mapsUrl, target: '_blank', rel: 'noopener', text: 'Map' }));
+        if (features && features.calendarExport) {
+          actions.appendChild(ce('button', { class: 'btn small ghost', type: 'button',
+            onclick: () => downloadIcs(ev) }, [copy.downloadCalendar || 'Add to Calendar']));
+        }
+        if (actions.children.length) box.appendChild(actions);
+        grid.appendChild(box);
+      }
+      card.appendChild(grid);
+      return card;
+    }
+
+    function renderRsvpForm(payload) {
+      if (!payload.features.publicRsvp) return null;
+      const copy    = payload.copy;
+      const rsvp    = payload.rsvp;
+      const guest   = payload.guest;
+      const fields  = rsvp.fields || {};
+      const events  = payload.events || [];
+      const statusOptions = rsvp.statusOptions || ['Attending','Maybe','Declined'];
+
+      const card = ce('section', { class: 'card' });
+      card.appendChild(ce('h2', { text: copy.rsvpHeader || 'RSVP' }));
+
+      const form = ce('form', { class: 'rsvp' });
+      const state = {
+        name:      guest ? guest.guestName : '',
+        partySize: guest ? (guest.confirmedPartySize ?? guest.partySize ?? 1) : 1,
+        rsvp:      guest && guest.rsvp && guest.rsvp !== 'Pending' ? guest.rsvp : statusOptions[0],
+        dietary:   guest ? guest.dietary || '' : '',
+        notes:     guest ? guest.notes   || '' : '',
+        phone:     guest ? guest.mobileNumber || '' : '',
+        email:     guest ? guest.emailAddress  || '' : '',
+        selections: (guest && guest.eventSelections) || [],
+      };
+
+      const updateSelection = (id, name, status) => {
+        const existing = state.selections.find(x => (x.id || x.name) === id);
+        if (existing) existing.status = status; else state.selections.push({ id, name, status });
+        renderEventButtons();
+      };
+
+      if (fields.name && fields.name.enabled) {
+        const input = ce('input', { type: 'text', name: 'name', required: fields.name.required ? 'required' : undefined, value: state.name });
+        input.addEventListener('input', (e) => state.name = e.target.value);
+        form.appendChild(ce('label', {}, [fields.name.label || 'Your Name', input]));
+      }
+
+      // Status radios
+      const statusWrap = ce('div', { class: 'status-options' });
+      for (const opt of statusOptions) {
+        const id = 'st-' + opt.toLowerCase();
+        const radio = ce('input', { type: 'radio', name: 'rsvp-status', id, value: opt, checked: state.rsvp === opt ? 'checked' : undefined });
+        radio.addEventListener('change', () => state.rsvp = opt);
+        statusWrap.appendChild(ce('label', { for: id }, [radio, opt]));
+      }
+      form.appendChild(statusWrap);
+
+      if (fields.partySize && fields.partySize.enabled) {
+        const input = ce('input', { type: 'number', name: 'partySize', min: '0', max: String(fields.partySize.max || 10), value: String(state.partySize) });
+        input.addEventListener('input', (e) => state.partySize = Number(e.target.value) || 0);
+        form.appendChild(ce('label', {}, [fields.partySize.label || 'Party Size', input]));
+      }
+
+      let eventButtonsHost = null;
+      function renderEventButtons() {
+        if (!eventButtonsHost) return;
+        eventButtonsHost.innerHTML = '';
+        for (const ev of events) {
+          const id = ev.id || ev.name;
+          const row = ce('div', { class: 'event-row' });
+          row.appendChild(ce('div', {}, [ev.name, ev.dateLabel ? ce('span', { class: 'muted', text: ` \u00b7 ${ev.dateLabel}` }) : null]));
+          const seg = ce('div', { class: 'seg' });
+          for (const s of ['attending','maybe','declined']) {
+            const cur = state.selections.find(x => (x.id || x.name) === id);
+            const active = cur && cur.status === s;
+            const btn = ce('button', { type: 'button', class: active ? 'active' : '', onclick: () => updateSelection(id, ev.name, s) }, [s[0].toUpperCase()+s.slice(1)]);
+            seg.appendChild(btn);
+          }
+          row.appendChild(seg);
+          eventButtonsHost.appendChild(row);
+        }
+      }
+      if (fields.perEvent && fields.perEvent.enabled && events.length > 1) {
+        eventButtonsHost = ce('div', { class: 'event-grid-rsvp' });
+        const lbl = ce('label', {}, [fields.perEvent.label || 'Which events?', eventButtonsHost]);
+        form.appendChild(lbl);
+        renderEventButtons();
+      }
+
+      if (fields.dietary && fields.dietary.enabled) {
+        const input = ce('input', { type: 'text', name: 'dietary', value: state.dietary });
+        input.addEventListener('input', (e) => state.dietary = e.target.value);
+        form.appendChild(ce('label', {}, [fields.dietary.label || 'Dietary preferences', input]));
+      }
+
+      if (fields.notes && fields.notes.enabled) {
+        const input = ce('textarea', { name: 'notes' });
+        input.value = state.notes;
+        input.addEventListener('input', (e) => state.notes = e.target.value);
+        form.appendChild(ce('label', {}, [fields.notes.label || 'Notes', input]));
+      }
+
+      const msg = ce('p', { class: 'muted' });
+      const btnLabel = guest && guest.rsvp && guest.rsvp !== 'Pending' ? (copy.rsvpUpdateButton || 'Update Response') : (copy.rsvpButton || 'Send RSVP');
+      const submit = ce('button', { class: 'btn', type: 'submit' }, [btnLabel]);
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!state.name || !state.name.trim()) { msg.textContent = 'Name is required.'; return; }
+        submit.disabled = true; msg.textContent = '';
+        const body = {
+          token:     getToken(),
+          name:      state.name,
+          phone:     state.phone,
+          email:     state.email,
+          partySize: state.partySize,
+          segment:   (guest && guest.segment) || '',
+          rsvp:      state.rsvp,
+          notes:     state.notes,
+          dietary:   state.dietary,
+          eventSelections: state.selections,
+        };
+        try {
+          const r = await fetch('/api/rsvp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const data = await r.json();
+          if (!r.ok || !data.ok) { msg.textContent = data.error || 'Something went wrong.'; submit.disabled = false; return; }
+          msg.textContent = copy.rsvpSubmitted || 'Your response has been recorded.';
+          submit.textContent = copy.rsvpUpdateButton || 'Update Response';
+          submit.disabled = false;
+        } catch (err) {
+          msg.textContent = 'Network error — please try again.'; submit.disabled = false;
+        }
+      });
+
+      form.appendChild(submit);
+      form.appendChild(msg);
+      card.appendChild(form);
+      return card;
+    }
+
+    function renderContact(event, copy) {
+      const hasEmail = event && event.contactEmail;
+      const hasPhone = event && event.contactPhone;
+      if (!hasEmail && !hasPhone) return null;
+      const card = ce('section', { class: 'card' });
+      card.appendChild(ce('h2', { text: copy.contactHeader || 'Questions?' }));
+      const row = ce('div', { class: 'row' });
+      if (hasEmail) row.appendChild(ce('a', { class: 'btn small ghost', href: `mailto:${event.contactEmail}`, text: event.contactEmail }));
+      if (hasPhone) row.appendChild(ce('a', { class: 'btn small ghost', href: `tel:${event.contactPhone}`, text: event.contactPhone }));
+      card.appendChild(row);
+      return card;
+    }
+
+    function downloadIcs(ev) {
+      const dtStart = (ev.dateISO || '').replace(/-/g,'') + 'T000000';
+      const uid = (ev.id || ev.name || 'event').replace(/\W/g,'-') + '@invite';
+      const ics = [
+        'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//InviteApp//EN',
+        'BEGIN:VEVENT',
+        `UID:${uid}`,
+        `DTSTAMP:${new Date().toISOString().replace(/[-:]/g,'').split('.')[0]}Z`,
+        dtStart && dtStart !== 'T000000' ? `DTSTART:${dtStart}` : '',
+        `SUMMARY:${(ev.name || '').replace(/[\r\n]/g,' ')}`,
+        ev.venue ? `LOCATION:${[ev.venue, ev.address, ev.city].filter(Boolean).join(', ')}` : '',
+        ev.description ? `DESCRIPTION:${ev.description.replace(/[\r\n]/g,' ')}` : '',
+        'END:VEVENT','END:VCALENDAR',
+      ].filter(Boolean).join('\r\n');
+      const blob = new Blob([ics], { type: 'text/calendar' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${(ev.name || 'event').replace(/\W+/g,'-')}.ics`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function setCopy(copy) {
+      if (!copy) return;
+      document.querySelectorAll('[data-copy-key]').forEach(el => {
+        const key = el.getAttribute('data-copy-key');
+        if (copy[key]) el.textContent = copy[key];
+      });
+    }
+
+    async function boot() {
+      const app = qs('#app');
+      const payload = await fetchPayload();
+      if (!payload || !payload.ok) {
+        app.innerHTML = '';
+        app.appendChild(ce('div', { class: 'card not-found' }, [
+          ce('h1', { text: (payload && payload.copy && payload.copy.inviteNotFound) || 'Invitation not found' }),
+          ce('p', { class: 'muted', text: (payload && payload.error) || '' }),
+        ]));
+        return;
+      }
+
+      applyTheme(payload.theme);
+      if (payload.features && payload.features.darkMode) {
+        document.documentElement.classList.add('dm-auto');
+      }
+      setCopy(payload.copy);
+
+      app.innerHTML = '';
+      const hero = pickHeroAsset(payload);
+      app.appendChild(renderHero(hero, payload.event.title, payload.event.subtitle, payload.copy));
+
+      const parts = [
+        renderHosts(payload.hosts, payload.copy),
+        renderDetails(payload.event, payload.copy),
+        renderEvents(payload.events, payload.copy, payload.features),
+        renderRsvpForm(payload),
+        renderContact(payload.event, payload.copy),
+      ].filter(Boolean);
+      for (const p of parts) app.appendChild(p);
+
+      if (!payload.guestFound && getToken()) {
+        const warn = ce('div', { class: 'card muted', text: payload.copy.inviteNotFound || 'Invitation not found.' });
+        app.insertBefore(warn, app.firstChild);
+      }
+    }
+
+    boot().catch(err => {
+      console.error('[invite] boot failed:', err);
+      document.getElementById('app').innerHTML = '<div class="card not-found"><p>Something went wrong.</p></div>';
+    });
+  })();
+  </script>
+</body>
+</html>

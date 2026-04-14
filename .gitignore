@@ -1,0 +1,10 @@
+node_modules/
+uploads/
+*.db
+*.db-journal
+.env
+.env.local
+.DS_Store
+npm-debug.log*
+dist/
+.cache/

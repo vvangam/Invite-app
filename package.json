@@ -1,0 +1,23 @@
+{
+  "name": "invite-app",
+  "version": "0.1.0",
+  "description": "Asset-first invite + RSVP app. Upload your invite (PDF/JPG/PNG/MP4), manage guests, send via WhatsApp.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test ./test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^2.0.0",
+    "pg": "^8.13.1",
+    "sharp": "^0.33.5"
+  },
+  "optionalDependencies": {
+    "pdfjs-dist": "^4.10.38"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title data-copy-key="adminTitle">Admin</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect x='6' y='6' width='52' height='52' rx='12' fill='%238b6f47'/></svg>"/>
+  <style>
+    :root { --bg:#faf7f2; --fg:#1a1a1a; --accent:#8b6f47; --muted:#6b6b6b; --card:#fff; --border:rgba(0,0,0,.1); --radius:12px; }
+    *,*::before,*::after { box-sizing:border-box; }
+    html,body { margin:0; padding:0; }
+    body { background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, sans-serif; min-height:100dvh; }
+    header { border-bottom: 1px solid var(--border); background: var(--card); padding: 14px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    header h1 { margin:0; font-size:1.2rem; font-weight:600; }
+    header nav { display:flex; gap:6px; flex-wrap:wrap; }
+    header nav button { appearance:none; border:1px solid var(--border); background:transparent; color: var(--fg); padding:.45em .9em; border-radius:999px; cursor:pointer; font: inherit; }
+    header nav button.active { background: var(--accent); color:#fff; border-color: var(--accent); }
+    main { padding: 22px; max-width: 1200px; margin: 0 auto; }
+    .card { background: var(--card); border:1px solid var(--border); border-radius: var(--radius); padding: 18px; margin: 14px 0; }
+    h2 { margin: 0 0 12px; font-size: 1.05rem; }
+    .muted { color: var(--muted); }
+    .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    input, select, textarea, button {
+      font: inherit; color: var(--fg);
+    }
+    input, select, textarea {
+      padding: .55em .7em; border:1px solid var(--border); border-radius: 8px; background: #fff; width: 100%;
+    }
+    label.field { display:grid; gap:4px; font-size:.88em; color: var(--muted); }
+    .btn { display:inline-block; appearance:none; border:0; cursor:pointer; font-weight:600; padding:.6em 1em; border-radius: 999px; background: var(--accent); color:#fff; }
+    .btn.small { padding:.4em .7em; font-size:.88em; }
+    .btn.ghost { background: transparent; color: var(--fg); border:1px solid var(--border); }
+    .btn.danger { background:#b13a3a; }
+    .btn:disabled { opacity:.6; cursor:not-allowed; }
+    table { width:100%; border-collapse: collapse; font-size:.92em; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align:left; vertical-align: top; }
+    th { background: rgba(0,0,0,.03); font-weight:600; }
+    .chip { display:inline-block; padding:.15em .55em; border-radius:999px; background: rgba(0,0,0,.06); font-size:.78em; }
+    .stats { display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+    .stat { padding: 10px 12px; border:1px solid var(--border); border-radius: var(--radius); background:#fff; }
+    .stat .n { font-size: 1.4rem; font-weight: 700; }
+    .stat .l { color: var(--muted); font-size:.82em; }
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align:center;
+      background: #fafafa; transition: background .2s ease, border-color .2s ease;
+    }
+    .upload-zone.drag { background: #fff6e8; border-color: var(--accent); }
+    .asset-tile { border:1px solid var(--border); border-radius: var(--radius); padding: 10px; background:#fff; }
+    .asset-tile img, .asset-tile video { width:100%; height: 160px; object-fit: contain; background: #f3f0ea; border-radius: 8px; }
+    .asset-tile .foot { display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:.82em; }
+    #pin-overlay { position: fixed; inset: 0; background: rgba(10,10,10,.6); display:flex; align-items:center; justify-content:center; z-index: 100; }
+    #pin-overlay .box { background: #fff; padding: 22px; border-radius: var(--radius); width: min(92vw, 360px); }
+    .hidden { display:none !important; }
+    .err { color:#b13a3a; }
+    details summary { cursor:pointer; font-weight:600; }
+    @media (max-width: 640px) {
+      th.mobile-hide, td.mobile-hide { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 data-copy-key="adminTitle">Admin</h1>
+    <nav id="tabs"></nav>
+    <div>
+      <button id="logout-btn" class="btn small ghost hidden">Log out</button>
+    </div>
+  </header>
+
+  <main id="main"></main>
+
+  <div id="pin-overlay" class="hidden">
+    <div class="box">
+      <h2 style="margin-top:0">Enter PIN</h2>
+      <form id="pin-form" class="row" style="flex-direction:column; align-items:stretch; gap:10px;">
+        <input type="password" id="pin-input" inputmode="numeric" autocomplete="one-time-code" required/>
+        <button type="submit" class="btn">Unlock</button>
+        <p class="err muted" id="pin-err" style="min-height:1.2em;"></p>
+      </form>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const STATE = {
+      token:    localStorage.getItem('invite-admin-token') || '',
+      config:   null,
+      features: {},
+      copy:     {},
+      tab:      'assets',
+      guests:   [],
+      assets:   [],
+      stats:    null,
+      selectedGuestIds: new Set(),
+    };
+
+    const qs  = (s, r=document) => r.querySelector(s);
+    const ce  = (tag, attrs={}, children=[]) => {
+      const el = document.createElement(tag);
+      for (const [k,v] of Object.entries(attrs)) {
+        if (k === 'class') el.className = v;
+        else if (k === 'html') el.innerHTML = v;
+        else if (k === 'text') el.textContent = v;
+        else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+        else if (v !== undefined && v !== null && v !== false) el.setAttribute(k, v);
+      }
+      for (const c of [].concat(children)) if (c != null) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+      return el;
+    };
+
+    async function api(path, opts = {}) {
+      const headers = Object.assign({}, opts.headers || {});
+      if (STATE.token) headers['x-auth-token'] = STATE.token;
+      if (opts.body && !(opts.body instanceof FormData) && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+        opts.body = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body);
+      }
+      const r = await fetch(path, Object.assign({}, opts, { headers }));
+      if (r.status === 401) { showPinGate(); throw new Error('auth'); }
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      return data;
+    }
+
+    function showPinGate() { qs('#pin-overlay').classList.remove('hidden'); }
+    function hidePinGate() { qs('#pin-overlay').classList.add('hidden'); qs('#pin-err').textContent = ''; }
+
+    async function validatePin(pin) {
+      const r = await fetch('/api/validate-pin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) throw new Error(data.error || 'Wrong PIN');
+      STATE.token = data.token;
+      localStorage.setItem('invite-admin-token', data.token);
+    }
+
+    async function loadBootstrap() {
+      const data = await (await fetch('/api/bootstrap')).json();
+      STATE.config   = data;
+      STATE.features = data.features || {};
+      STATE.copy     = data.copy || {};
+      document.querySelectorAll('[data-copy-key]').forEach(el => {
+        const key = el.getAttribute('data-copy-key');
+        if (STATE.copy[key]) el.textContent = STATE.copy[key];
+      });
+    }
+
+    function tabs() {
+      const list = [];
+      if (STATE.features.assetUpload)   list.push(['assets',  STATE.copy.adminTabAssets  || 'Assets']);
+      if (STATE.features.guestManager)  list.push(['guests',  STATE.copy.adminTabGuests  || 'Guests']);
+      if (STATE.features.bulkMessaging) list.push(['send',    STATE.copy.adminTabSend    || 'Send']);
+      if (STATE.features.csvExport || STATE.features.jsonBackup) list.push(['exports', STATE.copy.adminTabExports || 'Exports']);
+      return list;
+    }
+
+    function renderTabs() {
+      const host = qs('#tabs');
+      host.innerHTML = '';
+      const list = tabs();
+      if (list.length && !list.some(([id]) => id === STATE.tab)) STATE.tab = list[0][0];
+      for (const [id, label] of list) {
+        const btn = ce('button', {
+          class: STATE.tab === id ? 'active' : '',
+          onclick: () => { STATE.tab = id; renderTabs(); renderBody(); },
+        }, [label]);
+        host.appendChild(btn);
+      }
+      qs('#logout-btn').classList.toggle('hidden', !STATE.token);
+    }
+
+    async function renderBody() {
+      const main = qs('#main');
+      main.innerHTML = '';
+      if (STATE.tab === 'assets')  return renderAssetsTab(main);
+      if (STATE.tab === 'guests')  return renderGuestsTab(main);
+      if (STATE.tab === 'send')    return renderSendTab(main);
+      if (STATE.tab === 'exports') return renderExportsTab(main);
+    }
+
+    // ─── Assets tab ───────────────────────────────────────────────────────
+    async function renderAssetsTab(host) {
+      host.appendChild(ce('div', { class: 'card' }, [
+        ce('h2', { text: 'Upload' }),
+        ce('p', { class: 'muted', text: 'Upload your invite as PDF, JPG, PNG, or MP4. The app uses the asset tagged "hero" as your main invitation.' }),
+        buildUploadZone(),
+      ]));
+      const list = ce('div', { class: 'card' });
+      list.appendChild(ce('h2', { text: 'Uploaded Assets' }));
+      const grid = ce('div', { class: 'grid' });
+      list.appendChild(grid);
+      host.appendChild(list);
+      await refreshAssets(grid);
+    }
+
+    function buildUploadZone() {
+      const zone = ce('div', { class: 'upload-zone' });
+      const msg = ce('p', { class: 'muted', text: 'Drop a file here, or click to choose.' });
+      const input = ce('input', { type: 'file', accept: 'application/pdf,image/jpeg,image/png,image/webp,video/mp4', style: 'display:none' });
+      const roleSel = ce('select', {}, (STATE.config.assetRoles || []).map(r => ce('option', { value: r, text: r })));
+      const hostInput = ce('input', { type: 'text', placeholder: 'host slug (optional)', style: 'max-width:180px;' });
+      const btn = ce('button', { class: 'btn', type: 'button', onclick: () => input.click() }, ['Choose file']);
+      const status = ce('p', { class: 'muted' });
+
+      async function doUpload(file) {
+        if (!file) return;
+        status.textContent = `Uploading ${file.name} ${(file.size/1024/1024).toFixed(1)} MB\u2026`;
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('role', roleSel.value || '');
+        fd.append('hostSlug', hostInput.value.trim().toLowerCase());
+        try {
+          const res = await api('/api/assets', { method: 'POST', body: fd });
+          status.innerHTML = '';
+          status.appendChild(document.createTextNode(`Uploaded "${res.asset.filename}" as "${res.asset.role || 'untagged'}"`));
+          renderBody();
+        } catch (e) { status.textContent = `Upload failed: ${e.message}`; }
+      }
+
+      input.addEventListener('change', () => doUpload(input.files[0]));
+      zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag'); });
+      zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+      zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('drag'); doUpload(e.dataTransfer.files[0]); });
+
+      zone.appendChild(msg);
+      zone.appendChild(ce('div', { class: 'row', style: 'justify-content:center; margin:8px 0;' }, [
+        ce('label', { class: 'field' }, ['Role', roleSel]),
+        ce('label', { class: 'field' }, ['Host slug', hostInput]),
+      ]));
+      zone.appendChild(btn);
+      zone.appendChild(input);
+      zone.appendChild(status);
+      return zone;
+    }
+
+    async function refreshAssets(grid) {
+      grid.innerHTML = '';
+      try {
+        const data = await api('/api/assets');
+        STATE.assets = data.assets || [];
+        if (!STATE.assets.length) {
+          grid.appendChild(ce('p', { class: 'muted', text: 'No assets yet. Upload your invite to get started.' }));
+          return;
+        }
+        for (const a of STATE.assets) {
+          const tile = ce('div', { class: 'asset-tile' });
+          if ((a.mime || '').startsWith('video/')) tile.appendChild(ce('video', { src: a.url, controls: 'controls', playsinline: 'playsinline' }));
+          else tile.appendChild(ce('img', { src: a.thumbUrl || a.url, alt: a.filename }));
+          tile.appendChild(ce('div', { class: 'muted', style: 'margin-top:6px; word-break:break-all; font-size:.82em;', text: a.filename }));
+          tile.appendChild(ce('div', { class: 'foot' }, [
+            ce('span', { class: 'chip', text: a.role || 'untagged' }),
+            ce('button', { class: 'btn small danger', onclick: async () => {
+              if (!confirm(`Delete "${a.filename}"?`)) return;
+              await api(`/api/assets/${a.id}`, { method: 'DELETE' });
+              refreshAssets(grid);
+            }}, ['Delete']),
+          ]));
+          grid.appendChild(tile);
+        }
+      } catch (e) { grid.appendChild(ce('p', { class: 'err', text: e.message })); }
+    }
+
+    // ─── Guests tab ───────────────────────────────────────────────────────
+    async function renderGuestsTab(host) {
+      const statCard = ce('div', { class: 'card' });
+      statCard.appendChild(ce('h2', { text: 'Overview' }));
+      const statGrid = ce('div', { class: 'stats' });
+      statCard.appendChild(statGrid);
+      host.appendChild(statCard);
+
+      const addCard = ce('div', { class: 'card' });
+      addCard.appendChild(ce('h2', { text: 'Add Guest' }));
+      const form = ce('form', { class: 'grid' });
+      const inputs = {
+        guestName:    ce('input', { required: 'required', name: 'guestName' }),
+        mobileNumber: ce('input', { name: 'mobileNumber', inputmode: 'tel' }),
+        emailAddress: ce('input', { name: 'emailAddress', type: 'email' }),
+        guestGroup:   ce('select', { name: 'guestGroup' }, [ce('option', { value: '', text: '(no group)' }), ...(STATE.config.groups || []).map(g => ce('option', { value: g, text: g }))]),
+        partySize:    ce('input', { name: 'partySize', type: 'number', min: '1', max: '20', value: '1' }),
+        segment:      ce('input', { name: 'segment', placeholder: 'optional segment' }),
+        notes:        ce('input', { name: 'notes' }),
+      };
+      form.appendChild(ce('label', { class: 'field' }, ['Name', inputs.guestName]));
+      form.appendChild(ce('label', { class: 'field' }, ['Mobile', inputs.mobileNumber]));
+      form.appendChild(ce('label', { class: 'field' }, ['Email', inputs.emailAddress]));
+      form.appendChild(ce('label', { class: 'field' }, ['Group', inputs.guestGroup]));
+      form.appendChild(ce('label', { class: 'field' }, ['Party size', inputs.partySize]));
+      form.appendChild(ce('label', { class: 'field' }, ['Segment', inputs.segment]));
+      form.appendChild(ce('label', { class: 'field' }, ['Notes', inputs.notes]));
+      const submit = ce('button', { class: 'btn', type: 'submit' }, ['Add Guest']);
+      const msg = ce('p', { class: 'muted' });
+      form.appendChild(submit);
+      form.appendChild(msg);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        submit.disabled = true; msg.textContent = '';
+        try {
+          const body = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
+          await api('/api/guests', { method: 'POST', body });
+          msg.textContent = `Added ${body.guestName}.`;
+          for (const el of Object.values(inputs)) if (el.tagName !== 'SELECT') el.value = '';
+          inputs.partySize.value = '1';
+          refreshGuests();
+          refreshStats();
+        } catch (err) { msg.textContent = err.message; }
+        submit.disabled = false;
+      });
+      addCard.appendChild(form);
+      host.appendChild(addCard);
+
+      const listCard = ce('div', { class: 'card' });
+      listCard.appendChild(ce('h2', { text: 'Guests' }));
+      const tableHost = ce('div', { id: 'guest-table-host' });
+      listCard.appendChild(tableHost);
+      host.appendChild(listCard);
+
+      async function refreshStats() {
+        try {
+          const s = await api('/api/stats');
+          STATE.stats = s;
+          statGrid.innerHTML = '';
+          [
+            ['Guests', s.total], ['Attending', s.attending], ['Pending', s.pending], ['Declined', s.declined],
+            ['Seats (est.)', s.totalSeats], ['Seats attending', s.attendingSeats],
+            ...(STATE.features.viewAnalytics ? [['Views', s.views], ['Submissions', s.submissions]] : []),
+          ].forEach(([l, n]) => statGrid.appendChild(ce('div', { class: 'stat' }, [ce('div', { class: 'n', text: String(n ?? '') }), ce('div', { class: 'l', text: l })])));
+        } catch (e) { /* ignore */ }
+      }
+
+      async function refreshGuests() {
+        try {
+          const data = await api('/api/guests');
+          STATE.guests = data.rows || [];
+          tableHost.innerHTML = '';
+          if (!STATE.guests.length) { tableHost.appendChild(ce('p', { class: 'muted', text: 'No guests yet.' })); return; }
+          const table = ce('table');
+          const thead = ce('thead');
+          thead.appendChild(ce('tr', {}, [
+            ce('th', { text: '#' }),
+            ce('th', { text: 'Name' }),
+            ce('th', { class: 'mobile-hide', text: 'Group' }),
+            ce('th', { class: 'mobile-hide', text: 'Phone' }),
+            ce('th', { text: 'Party' }),
+            ce('th', { text: 'RSVP' }),
+            ce('th', { text: 'Invite' }),
+            ce('th', { text: '' }),
+          ]));
+          table.appendChild(thead);
+          const tbody = ce('tbody');
+          for (const g of STATE.guests) {
+            const link = `${location.origin}/i/${g.inviteToken}`;
+            const rsvpSel = ce('select', {}, ['Pending','Attending','Maybe','Declined'].map(s => ce('option', { value: s, selected: g.rsvp === s ? 'selected' : undefined, text: s })));
+            rsvpSel.addEventListener('change', async () => {
+              await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'rsvp', value: rsvpSel.value } });
+              refreshStats();
+            });
+            const invSel = ce('select', {}, ['Not Sent','Sent','Delivered','Not Invited'].map(s => ce('option', { value: s, selected: g.inviteStatus === s ? 'selected' : undefined, text: s })));
+            invSel.addEventListener('change', async () => {
+              await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'inviteStatus', value: invSel.value } });
+              refreshStats();
+            });
+            const copyBtn = ce('button', { class: 'btn small ghost', onclick: () => navigator.clipboard.writeText(link).then(() => copyBtn.textContent = 'Copied') }, ['Copy link']);
+            const waBtn = g.mobileNumber ? ce('a', { class: 'btn small ghost', href: waUrl(g, link), target: '_blank', rel: 'noopener', text: 'WhatsApp' }) : null;
+            const delBtn = ce('button', { class: 'btn small danger', onclick: async () => {
+              if (!confirm(`Delete ${g.guestName}?`)) return;
+              await api(`/api/guests/${g.id}`, { method: 'DELETE' });
+              refreshGuests(); refreshStats();
+            }}, ['Delete']);
+            tbody.appendChild(ce('tr', {}, [
+              ce('td', { text: String(g.id) }),
+              ce('td', {}, [g.guestName, ce('br'), ce('span', { class: 'muted', style:'font-size:.85em', text: g.emailAddress || '' })]),
+              ce('td', { class: 'mobile-hide', text: g.guestGroup || '' }),
+              ce('td', { class: 'mobile-hide', text: g.mobileNumber || '' }),
+              ce('td', { text: `${g.partySize || 1}${g.confirmedPartySize != null ? ` → ${g.confirmedPartySize}` : ''}` }),
+              ce('td', {}, [rsvpSel]),
+              ce('td', {}, [invSel]),
+              ce('td', {}, [ce('div', { class: 'row' }, [copyBtn, waBtn, delBtn].filter(Boolean))]),
+            ]));
+          }
+          table.appendChild(tbody);
+          tableHost.appendChild(table);
+        } catch (e) { tableHost.appendChild(ce('p', { class: 'err', text: e.message })); }
+      }
+
+      refreshStats();
+      refreshGuests();
+    }
+
+    function waUrl(g, inviteUrl) {
+      const tpl = (STATE.config.messaging && STATE.config.messaging.inviteTemplate) || 'Hi {{name}}, {{inviteUrl}}';
+      const event = STATE.config.event || {};
+      const vars = {
+        name: g.guestName || '',
+        eventTitle: event.title || '',
+        eventDate: event.dateLabel ? ` on ${event.dateLabel}` : '',
+        inviteUrl,
+        rsvpDeadline: event.rsvpDeadline || '',
+      };
+      const msg = tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '');
+      const phone = (g.mobileNumber || '').replace(/[^0-9]/g, '');
+      return `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    }
+
+    // ─── Send tab ──────────────────────────────────────────────────────────
+    async function renderSendTab(host) {
+      const card = ce('div', { class: 'card' });
+      card.appendChild(ce('h2', { text: 'Bulk WhatsApp Send' }));
+      card.appendChild(ce('p', { class: 'muted', text: 'Step through each guest and open a pre-filled WhatsApp message. After sending, mark the guest "Sent" and move on.' }));
+      const list = ce('div', { id: 'send-list' });
+      card.appendChild(list);
+      host.appendChild(card);
+
+      try {
+        const data = await api('/api/guests');
+        const guests = (data.rows || []).filter(g => g.mobileNumber);
+        if (!guests.length) { list.appendChild(ce('p', { class: 'muted', text: 'No guests with phone numbers yet.' })); return; }
+        const state = { idx: 0 };
+        const cursor = ce('div');
+        const nav = ce('div', { class: 'row', style: 'margin-top:12px' });
+        list.appendChild(cursor);
+        list.appendChild(nav);
+        const paint = () => {
+          const g = guests[state.idx];
+          cursor.innerHTML = '';
+          if (!g) { cursor.appendChild(ce('p', { text: 'All done.' })); nav.innerHTML = ''; return; }
+          const link = `${location.origin}/i/${g.inviteToken}`;
+          const wa = waUrl(g, link);
+          cursor.appendChild(ce('div', { class: 'card' }, [
+            ce('div', { class: 'muted', text: `Guest ${state.idx + 1} of ${guests.length}` }),
+            ce('h3', { text: g.guestName }),
+            ce('p', { class: 'muted', text: `${g.mobileNumber} \u00b7 ${g.guestGroup || 'No group'} \u00b7 ${g.inviteStatus}` }),
+            ce('div', { class: 'row' }, [
+              ce('a', { class: 'btn', href: wa, target: '_blank', rel: 'noopener', text: 'Open WhatsApp' }),
+              ce('button', { class: 'btn ghost', onclick: async () => {
+                await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'inviteStatus', value: 'Sent' } });
+                state.idx += 1; paint();
+              }}, ['Sent → Next']),
+              ce('button', { class: 'btn ghost', onclick: () => { state.idx += 1; paint(); }}, ['Skip']),
+            ]),
+          ]));
+        };
+        paint();
+      } catch (e) { list.appendChild(ce('p', { class: 'err', text: e.message })); }
+    }
+
+    // ─── Exports tab ───────────────────────────────────────────────────────
+    function renderExportsTab(host) {
+      const card = ce('div', { class: 'card' });
+      card.appendChild(ce('h2', { text: 'Exports & Backup' }));
+      const row = ce('div', { class: 'row' });
+      if (STATE.features.csvExport) row.appendChild(ce('a', { class: 'btn ghost', href: `/api/export.csv?token=${encodeURIComponent(STATE.token)}`, text: 'Export CSV' }));
+      if (STATE.features.jsonBackup) row.appendChild(ce('a', { class: 'btn ghost', href: `/api/export.json?token=${encodeURIComponent(STATE.token)}`, text: 'Download JSON backup' }));
+
+      const restoreInput = ce('input', { type: 'file', accept: 'application/json', style: 'display:none' });
+      const restoreBtn = ce('button', { class: 'btn ghost', onclick: () => restoreInput.click() }, ['Restore from JSON']);
+      const wipeChk = ce('input', { type: 'checkbox' });
+      const wipeLbl = ce('label', { class: 'field', style: 'flex-direction:row; align-items:center; gap:6px;' }, [wipeChk, ' Wipe existing guests first']);
+      const status = ce('p', { class: 'muted' });
+      restoreInput.addEventListener('change', async () => {
+        const file = restoreInput.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const parsed = JSON.parse(text);
+          const guests = parsed.guests || [];
+          const res = await api('/api/import.json', { method: 'POST', body: { guests, wipeFirst: wipeChk.checked } });
+          status.textContent = `Imported ${res.imported} guests.`;
+        } catch (e) { status.textContent = `Restore failed: ${e.message}`; }
+      });
+      if (STATE.features.jsonBackup) row.appendChild(restoreBtn);
+      card.appendChild(row);
+      if (STATE.features.jsonBackup) { card.appendChild(wipeLbl); card.appendChild(restoreInput); card.appendChild(status); }
+
+      host.appendChild(card);
+    }
+
+    // ─── Boot ─────────────────────────────────────────────────────────────
+    async function boot() {
+      await loadBootstrap();
+      if (STATE.config.requiresPin && !STATE.token) { showPinGate(); return; }
+      renderTabs();
+      renderBody();
+      hidePinGate();
+    }
+
+    qs('#pin-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const pin = qs('#pin-input').value;
+      try {
+        await validatePin(pin);
+        hidePinGate();
+        renderTabs();
+        renderBody();
+      } catch (err) { qs('#pin-err').textContent = err.message; }
+    });
+
+    qs('#logout-btn').addEventListener('click', async () => {
+      try { await api('/api/logout', { method: 'POST' }); } catch {}
+      localStorage.removeItem('invite-admin-token');
+      STATE.token = '';
+      showPinGate();
+    });
+
+    boot().catch(err => {
+      console.error('[admin] boot failed:', err);
+      qs('#main').innerHTML = '';
+      qs('#main').appendChild(ce('p', { class: 'err', text: err.message || String(err) }));
+    });
+  })();
+  </script>
+</body>
+</html>
