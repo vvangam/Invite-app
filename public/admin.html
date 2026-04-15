@@ -1639,11 +1639,48 @@
         if (helperText) wrap.appendChild(ce('p', { class: 'subtle', style: 'font-size:.78em; margin: 4px 0 0;', text: helperText }));
         return wrap;
       }
-      msgCard.appendChild(templateField('Invite message (WhatsApp / share link)', 'inviteTemplate',
+      msgCard.appendChild(templateField('Invite message (WhatsApp / share link / email body)', 'inviteTemplate',
         'Hi {{name}}, you\u2019re invited to {{eventTitle}}{{eventDate}}. Details & RSVP: {{inviteUrl}}'));
-      msgCard.appendChild(templateField('Reminder message (Phase 5 — scheduler not yet wired)', 'reminderTemplate',
+      msgCard.appendChild(templateField('Reminder message', 'reminderTemplate',
         'Hi {{name}}, reminder to RSVP for {{eventTitle}} by {{rsvpDeadline}}: {{inviteUrl}}',
-        'Editable now so it is ready when scheduled reminders ship.'));
+        'Used by per-guest reminders + the auto-reminder scheduler when enabled.'));
+
+      // Email-specific subjects (used when the email channel is active).
+      function emailSubjectField(label, key, placeholder) {
+        const input = ce('input', { type: 'text', placeholder });
+        input.value = draft.messaging[key] || '';
+        input.addEventListener('input', () => { draft.messaging[key] = input.value; });
+        return ce('div', { style: 'margin-top: 10px;' }, [ce('label', { class: 'field' }, [label, input])]);
+      }
+      msgCard.appendChild(emailSubjectField('Email invite subject', 'emailInviteSubject',
+        'You\u2019re invited: {{eventTitle}}'));
+      msgCard.appendChild(emailSubjectField('Email reminder subject', 'emailReminderSubject',
+        'Reminder: please RSVP for {{eventTitle}}'));
+
+      // Auto-reminder settings. Gated on the email channel being configured
+      // server-side — otherwise the toggle is a no-op (server checks too).
+      const autoCard = ce('div', { style: 'margin-top: 14px;' });
+      autoCard.appendChild(ce('h3', { text: 'Automation', style: 'margin: 0 0 6px; font-size: 1rem;' }));
+      if (!STATE.features.emailChannel) {
+        autoCard.appendChild(ce('p', { class: 'subtle', style: 'font-size:.85em;', text: 'Email channel not configured on the server — set RESEND_API_KEY and RESEND_FROM_EMAIL to enable automated reminders + admin notifications.' }));
+      }
+      autoCard.appendChild(checkbox('Auto-reminders — email pending guests before the RSVP deadline', !!draft.features.autoReminders, (v) => { draft.features.autoReminders = v; }));
+      autoCard.appendChild(checkbox('Email me on every new RSVP submission', !!draft.features.adminNotifications, (v) => { draft.features.adminNotifications = v; }));
+      const windowsInput = ce('input', {
+        type: 'text', placeholder: '14, 7, 1',
+        value: Array.isArray(draft.messaging.reminderWindows) ? draft.messaging.reminderWindows.join(', ') : '14, 7, 1',
+      });
+      windowsInput.addEventListener('input', () => {
+        draft.messaging.reminderWindows = windowsInput.value
+          .split(',').map(s => Number(s.trim()))
+          .filter(n => Number.isFinite(n) && n > 0);
+      });
+      autoCard.appendChild(ce('label', { class: 'field', style: 'margin-top: 8px;' }, [
+        'Reminder windows (days before deadline)',
+        windowsInput,
+        ce('p', { class: 'subtle', style: 'font-size:.78em; margin: 4px 0 0;', text: 'Comma-separated. One reminder per guest per window. Default: 14, 7, 1.' }),
+      ]));
+      msgCard.appendChild(autoCard);
 
       // ── Guest segments repeater ───────────────────────────────────────
       const segCard = ce('div', { class: 'card' }, [

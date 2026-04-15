@@ -330,6 +330,97 @@ function textToHtml(text) {
   return `<div style="font-family:system-ui,sans-serif;line-height:1.55;color:#222;max-width:560px;white-space:pre-wrap">${linked}</div>`;
 }
 
+// ── Reminder scheduler ─────────────────────────────────────────────────────
+// In-process timer. Runs every REMINDER_CYCLE_MS, plus once on startup once
+// initDb resolves. No external deps, no queue — fine for a single-server
+// deployment. Each cycle is idempotent thanks to the per-window action key
+// stored in rsvp_events (`reminder_sent_<N>d`), which gates re-sends.
+const REMINDER_CYCLE_MS = 6 * 60 * 60 * 1000; // 6 hours
+let reminderTimer = null;
+
+async function runReminderCycle() {
+  try {
+    const cfg = await mergedConfig();
+    if (!cfg.features || !cfg.features.autoReminders) return;
+    if (!emailChannelEnabled()) return;
+    const deadline = resolveDeadlineMs(cfg.event || {});
+    if (!deadline || deadline < Date.now()) return;
+
+    // Sort descending so [14,7,1] gives us the smallest active window last.
+    const windows = ((cfg.messaging && cfg.messaging.reminderWindows) || [14, 7, 1])
+      .map(Number).filter(n => Number.isFinite(n) && n > 0)
+      .sort((a, b) => b - a);
+    if (!windows.length) return;
+
+    const daysLeft = (deadline - Date.now()) / 86_400_000;
+    // Pick the most urgent active window = smallest W such that daysLeft <= W.
+    // At daysLeft=10, windows=[14,7,1] → active=[14], we send the 14-day.
+    // At daysLeft=5  → active=[14,7], we send the 7-day (and anyone who
+    // somehow missed the 14-day already logged theirs, so they stay quiet).
+    const active = windows.filter(w => daysLeft <= w);
+    if (!active.length) return;
+    const currentWindow = active[active.length - 1];
+    const actionKey = `reminder_sent_${currentWindow}d`;
+
+    // Find guests still pending, previously invited, with an email on record,
+    // and no reminder logged for this window yet. The NOT EXISTS subquery
+    // makes the cycle idempotent — re-running does not double-send.
+    const guests = await dbAll(
+      `SELECT g.* FROM guests g
+        WHERE g.rsvp='Pending' AND g.invite_status='Sent'
+          AND g.email_address IS NOT NULL AND g.email_address != ''
+          AND NOT EXISTS (SELECT 1 FROM rsvp_events e WHERE e.guest_id=g.id AND e.action=?)`,
+      `SELECT g.* FROM guests g
+        WHERE g.rsvp='Pending' AND g.invite_status='Sent'
+          AND g.email_address IS NOT NULL AND g.email_address != ''
+          AND NOT EXISTS (SELECT 1 FROM rsvp_events e WHERE e.guest_id=g.id AND e.action=$1)`,
+      [actionKey]
+    );
+    if (!guests.length) return;
+
+    console.log(`[reminders] sending ${guests.length} reminder(s) for ${currentWindow}-day window`);
+    const msgCfg = cfg.messaging || {};
+    for (const guest of guests) {
+      try {
+        const token = guest.invite_token || await ensureInviteTokenForGuest(guest.id);
+        const url = inviteUrlFor(token, null);
+        const vars = {
+          name:         guest.guest_name || '',
+          eventTitle:   (cfg.event && cfg.event.title) || '',
+          eventDate:    (cfg.event && cfg.event.dateLabel) ? ` on ${cfg.event.dateLabel}` : '',
+          inviteUrl:    url,
+          rsvpDeadline: (cfg.event && cfg.event.rsvpDeadline) || '',
+        };
+        const bodyText = renderTemplate(msgCfg.reminderTemplate || '', vars);
+        const subject = renderTemplate(msgCfg.emailReminderSubject || `Reminder: ${vars.eventTitle}`, vars);
+        await sendEmailViaResend({ to: guest.email_address, subject, text: bodyText, html: textToHtml(bodyText) });
+        // Log with the window-specific action so we don't re-send for the
+        // same window. No ip/ua hashes — this event didn't originate from
+        // a request, and the action name is enough to distinguish it from
+        // manual reminder_sent events logged via /api/send-invite.
+        await dbRun(
+          `INSERT INTO rsvp_events (guest_id, action, ip_hash, ua_hash) VALUES (?,?,?,?)`,
+          `INSERT INTO rsvp_events (guest_id, action, ip_hash, ua_hash) VALUES ($1,$2,$3,$4)`,
+          [guest.id, actionKey, '', '']
+        );
+      } catch (e) {
+        console.error(`[reminders] failed for guest ${guest.id}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[reminders] cycle failed:', e.message);
+  }
+}
+
+function startReminderScheduler() {
+  if (reminderTimer) return;
+  reminderTimer = setInterval(runReminderCycle, REMINDER_CYCLE_MS);
+  reminderTimer.unref();
+  // Kick off one cycle 30 seconds after boot so we don't delay startup but
+  // also don't hammer the DB before migrations finish.
+  setTimeout(runReminderCycle, 30_000).unref();
+}
+
 // ── Auth (DB-backed sessions, persist across restarts) ──────────────────────
 async function isValidSession(token) {
   if (!token) return false;
@@ -1672,7 +1763,10 @@ function start() {
 
   initDb()
     .then(() => backfillInviteTokens())
-    .then(() => console.log('DB ready'))
+    .then(() => {
+      console.log('DB ready');
+      startReminderScheduler();
+    })
     .catch((err) => console.error('DB init failed:', err));
 }
 
