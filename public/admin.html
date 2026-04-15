@@ -209,6 +209,13 @@
     .wizard-actions { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
     .wizard-actions .right { display: flex; gap: 8px; margin-left: auto; }
     .wizard-card .preset-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+    .wizard-events { display: grid; gap: 12px; margin: 4px 0 2px; }
+    .wizard-event-row {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 12px; display: grid; gap: 10px; background: var(--surface2);
+    }
+    .wizard-event-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .wizard-event-head strong { font-size: .9em; color: var(--fgMuted); font-weight: 600; }
 
     /* Settings split layout with inline invite preview */
     .settings-split { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
@@ -2135,8 +2142,22 @@
       data.dateISO ||= ev.dateISO || '';
       data.venue ||= ev.venue || '';
       data.preset ||= serverCfg.themePresetActive || '';
+      data.hostedBy ||= ev.hostedBy || '';
       data.hostName ||= '';
       data.hostRole ||= '';
+      // Sub-events draft. Seed from existing config on re-run, otherwise
+      // start empty → wizard stays in single-event mode unless the user
+      // explicitly adds entries in stepEvents.
+      if (!Array.isArray(data.events)) {
+        data.events = Array.isArray(serverCfg.events)
+          ? serverCfg.events.map(e => ({
+              id: e.id || '',
+              name: e.name || '',
+              dateISO: e.dateISO || '',
+              venue: e.venue || '',
+            }))
+          : [];
+      }
 
       // Step list is built dynamically so we can drop the hero step when
       // asset uploads are disabled. Keeps step count + progress dots honest.
@@ -2144,6 +2165,7 @@
         { name: 'preset',    render: stepPreset },
         { name: 'title',     render: stepTitle },
         { name: 'dateVenue', render: stepDateVenue },
+        { name: 'events',    render: stepEvents },
         ...(STATE.features.assetUpload ? [{ name: 'hero', render: stepHero }] : []),
         { name: 'host',      render: stepHost },
       ];
@@ -2266,6 +2288,16 @@
         const input = ce('input', { type: 'text', placeholder: 'e.g. Aditi & Rohan · Wedding', value: data.title || '' });
         input.addEventListener('input', () => { data.title = input.value.trim(); });
         wrap.appendChild(ce('label', { class: 'field' }, ['Event title', input]));
+        // Hosted by — optional tagline that renders directly under the title
+        // on the invite. Separate from hosts[] (which is the side/family
+        // strip); this is just a display string.
+        const hostedByInput = ce('input', {
+          type: 'text',
+          placeholder: 'e.g. The Vangam & Rao families',
+          value: data.hostedBy || '',
+        });
+        hostedByInput.addEventListener('input', () => { data.hostedBy = hostedByInput.value.trim(); });
+        wrap.appendChild(ce('label', { class: 'field' }, ['Hosted by (tagline under title)', hostedByInput]));
         setTimeout(() => input.focus(), 50);
         return { node: wrap, isValid: () => (data.title || '').trim().length >= 2 };
       }
@@ -2283,6 +2315,85 @@
         venueInput.addEventListener('input', () => { data.venue = venueInput.value.trim(); });
         wrap.appendChild(ce('label', { class: 'field' }, ['Venue', venueInput]));
         return { node: wrap, isValid: () => true };
+      }
+
+      // Sub-events step — lets the admin declare 0..N ceremonies / sessions
+      // (e.g. Ceremony · Reception · Cocktails). Empty list ⇒ single-event
+      // mode on the invite (no timeline, no per-event RSVP picker). Every
+      // entry gets a stable slug-derived id so later config merges don't
+      // duplicate it.
+      function stepEvents(data) {
+        const wrap = ce('div');
+        wrap.appendChild(ce('h2', { text: 'Additional events?' }));
+        wrap.appendChild(ce('p', { class: 'hint', text: 'Add ceremonies, receptions, or sessions. Leave empty for a single-event invite.' }));
+
+        const list = ce('div', { class: 'wizard-events' });
+
+        function slugify(s) {
+          return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || ('event-' + Math.random().toString(36).slice(2, 6));
+        }
+
+        function renderRow(entry, idx) {
+          const row = ce('div', { class: 'wizard-event-row' });
+          const head = ce('div', { class: 'wizard-event-head' });
+          head.appendChild(ce('strong', { text: 'Event ' + (idx + 1) }));
+          const rm = ce('button', { class: 'btn small ghost', type: 'button' }, ['Remove']);
+          rm.addEventListener('click', () => {
+            data.events.splice(idx, 1);
+            redraw();
+          });
+          head.appendChild(rm);
+          row.appendChild(head);
+
+          const nameInput = ce('input', { type: 'text', placeholder: 'e.g. Ceremony', value: entry.name || '' });
+          nameInput.addEventListener('input', () => {
+            entry.name = nameInput.value.trim();
+            if (!entry.id) entry.id = slugify(entry.name);
+          });
+          row.appendChild(ce('label', { class: 'field' }, ['Name', nameInput]));
+
+          const dateInput = ce('input', { type: 'datetime-local', value: isoToLocalDatetime(entry.dateISO) });
+          dateInput.addEventListener('input', () => { entry.dateISO = localDatetimeToIso(dateInput.value); });
+          row.appendChild(ce('label', { class: 'field' }, ['Date & time', dateInput]));
+
+          const venueInput = ce('input', { type: 'text', placeholder: 'Venue (optional)', value: entry.venue || '' });
+          venueInput.addEventListener('input', () => { entry.venue = venueInput.value.trim(); });
+          row.appendChild(ce('label', { class: 'field' }, ['Venue', venueInput]));
+
+          return row;
+        }
+
+        function redraw() {
+          list.innerHTML = '';
+          if (!data.events.length) {
+            list.appendChild(ce('p', { class: 'muted', text: 'No additional events yet.' }));
+          } else {
+            data.events.forEach((e, i) => list.appendChild(renderRow(e, i)));
+          }
+          counter.textContent = data.events.length
+            ? `${data.events.length} event${data.events.length === 1 ? '' : 's'}`
+            : 'Single-event invite';
+        }
+
+        const counter = ce('p', { class: 'muted', style: 'margin: 0;' });
+
+        const addBtn = ce('button', { class: 'btn ghost', type: 'button' }, ['+ Add event']);
+        addBtn.addEventListener('click', () => {
+          data.events.push({ id: '', name: '', dateISO: '', venue: '' });
+          redraw();
+        });
+
+        wrap.appendChild(counter);
+        wrap.appendChild(list);
+        wrap.appendChild(addBtn);
+        redraw();
+
+        // Valid only when every existing row has a name — block advancing
+        // until empty rows are filled or removed, so we don't persist blanks.
+        return {
+          node: wrap,
+          isValid: () => data.events.every(e => (e.name || '').trim().length >= 2),
+        };
       }
 
       function stepHero(data) {
@@ -2332,7 +2443,11 @@
           const current = cfgRes.config || {};
           current.event ||= {};
           current.hosts ||= [];
+          current.events ||= [];
           if (data.title) current.event.title = data.title;
+          if (typeof data.hostedBy === 'string' && data.hostedBy.trim()) {
+            current.event.hostedBy = data.hostedBy.trim();
+          }
           if (data.dateISO) {
             current.event.dateISO = data.dateISO;
             // Populate dateLabel with a humane fallback if empty.
@@ -2346,6 +2461,35 @@
           if (data.preset) {
             current.theme ||= {};
             current.themePresetActive = data.preset;
+          }
+          // Merge wizard events into current.events: update-by-id when the
+          // slug matches an existing entry, otherwise append. Keeps user
+          // customisations in Settings safe across re-runs of the wizard.
+          if (Array.isArray(data.events) && data.events.length) {
+            const slugify = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+            for (const draft of data.events) {
+              const name = (draft.name || '').trim();
+              if (!name) continue;
+              const id = draft.id || slugify(name) || ('event-' + Math.random().toString(36).slice(2, 6));
+              const dateLabel = draft.dateISO
+                ? (() => { try { return new Date(draft.dateISO).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' }); } catch { return ''; } })()
+                : '';
+              const existing = current.events.find(e => e.id === id);
+              if (existing) {
+                existing.name = name;
+                if (draft.dateISO) existing.dateISO = draft.dateISO;
+                if (dateLabel && !existing.dateLabel) existing.dateLabel = dateLabel;
+                if (draft.venue) existing.venue = draft.venue;
+              } else {
+                current.events.push({
+                  id,
+                  name,
+                  dateISO: draft.dateISO || '',
+                  dateLabel,
+                  venue: draft.venue || '',
+                });
+              }
+            }
           }
           if (data.hostName) {
             const slug = (data.hostName || 'host').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'host';

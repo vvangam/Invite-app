@@ -50,6 +50,11 @@
       font-size:.74rem; letter-spacing: var(--trackingLoose); text-transform:uppercase;
       color: var(--accent); margin: 0 0 .9em; font-weight:600;
     }
+    .tagline {
+      font-family: var(--fontDisplay); font-style: italic;
+      color: var(--fgMuted); margin: .2em 0 .4em;
+      font-size: clamp(1rem, 1.6vw, 1.15rem);
+    }
 
     /* Cards — surface treatment differs per preset via heroSurface token. */
     .card {
@@ -506,9 +511,10 @@
       } else {
         // Text-only fallback hero — uses display type for impact.
         wrap.appendChild(ce('p', { class: 'eyebrow', text: (copy && copy.inviteHeaderCta) || 'You\u2019re Invited' }));
-        if (title)    wrap.appendChild(ce('h1', { text: title }));
-        if (subtitle) wrap.appendChild(ce('p',  { class: 'muted', text: subtitle }));
-        if (copy && copy.heroFallback) wrap.appendChild(ce('p', { class: 'muted', text: copy.heroFallback }));
+        if (title)                       wrap.appendChild(ce('h1', { text: title }));
+        if (event && event.hostedBy)     wrap.appendChild(ce('p',  { class: 'tagline', text: event.hostedBy }));
+        if (subtitle)                    wrap.appendChild(ce('p',  { class: 'muted',   text: subtitle }));
+        if (copy && copy.heroFallback)   wrap.appendChild(ce('p',  { class: 'muted',   text: copy.heroFallback }));
       }
       const cd = renderCountdown(event && event.dateISO);
       if (cd) wrap.appendChild(cd);
@@ -535,6 +541,7 @@
       };
 
       [
+        row('Hosted by', event.hostedBy),
         row('Date', [event.dateLabel, event.timeLabel].filter(Boolean).join(' \u00b7 ')),
         row('Venue', [event.venue, event.address, event.city].filter(Boolean).join(', ')),
         row('Dress Code', event.dressCode),
