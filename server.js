@@ -143,6 +143,8 @@ async function initDb() {
     `);
     await ensureColumn('guests', 'party_members', "TEXT NOT NULL DEFAULT ''");
     await ensureColumn('guests', 'household_id', "TEXT NOT NULL DEFAULT ''");
+    // Per-sub-event image scoping. Blank = main event / unscoped.
+    await ensureColumn('assets', 'event_id', "TEXT NOT NULL DEFAULT ''");
     return;
   }
 
@@ -217,6 +219,7 @@ async function initDb() {
   // Idempotent column backfills for long-lived databases.
   await ensureColumn('guests', 'party_members', "TEXT NOT NULL DEFAULT ''");
   await ensureColumn('guests', 'household_id', "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn('assets', 'event_id', "TEXT NOT NULL DEFAULT ''");
 }
 
 // ── Tokens & helpers ────────────────────────────────────────────────────────
@@ -858,6 +861,7 @@ function assetToPublic(row) {
     id:         row.id,
     role:       row.role || '',
     hostSlug:   row.host_slug || '',
+    eventId:    row.event_id || '',
     filename:   row.original_filename,
     mime:       row.mime,
     size:       Number(row.size_bytes || 0),
@@ -972,12 +976,17 @@ async function loadAssetsByRole() {
   const rows = await dbAll(`SELECT * FROM assets ORDER BY sort_order ASC, id ASC`);
   const byRole = {};
   const byHost = {};
+  // byEvent indexes assets attached to a specific sub-event id.
+  // Main-event / unscoped assets (event_id='') stay out of this map so the
+  // existing hero logic (byRole.hero[0]) continues to work unchanged.
+  const byEvent = {};
   for (const row of rows) {
     const pub = assetToPublic(row);
     if (row.role) (byRole[row.role] ||= []).push(pub);
     if (row.host_slug) (byHost[row.host_slug] ||= []).push(pub);
+    if (row.event_id) (byEvent[row.event_id] ||= []).push(pub);
   }
-  return { byRole, byHost, all: rows.map(assetToPublic) };
+  return { byRole, byHost, byEvent, all: rows.map(assetToPublic) };
 }
 
 // View-tracking beacon. Fires once per page load from invite.html. Records
@@ -1228,6 +1237,7 @@ app.post('/api/assets', requireAuth, async (req, res) => {
 
     const role     = String(req.body.role || '').trim();
     const hostSlug = String(req.body.hostSlug || '').trim().toLowerCase();
+    const eventId  = String(req.body.eventId || '').trim();
     if (role && !CONFIG.assetRoles.includes(role)) {
       return res.status(400).json({ ok: false, error: `Unknown role: ${role}. Allowed: ${CONFIG.assetRoles.join(', ')}` });
     }
@@ -1258,12 +1268,15 @@ app.post('/api/assets', requireAuth, async (req, res) => {
         variants = { full: storageKey };
       }
 
-      // Enforce singleton roles (one 'hero', etc.) by replacing.
+      // Singleton roles are scoped to (role, event_id). A main-event hero
+      // (event_id='') and a ceremony hero (event_id='ceremony') can coexist,
+      // but uploading a second ceremony hero replaces the first. Gallery is
+      // non-singleton — multiple per event allowed.
       if (role === 'hero' || role === 'background') {
         await dbRun(
-          `DELETE FROM assets WHERE role=?`,
-          `DELETE FROM assets WHERE role=$1`,
-          [role]
+          `DELETE FROM assets WHERE role=? AND event_id=?`,
+          `DELETE FROM assets WHERE role=$1 AND event_id=$2`,
+          [role, eventId]
         );
       }
       // Enforce one asset per host slug (if provided)
@@ -1277,13 +1290,13 @@ app.post('/api/assets', requireAuth, async (req, res) => {
 
       const result = pg
         ? await pg.query(
-            `INSERT INTO assets (role, host_slug, original_filename, mime, size_bytes, page_count, storage_key, variants_json)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-            [role, hostSlug, req.file.originalname, mime, req.file.size, pageCount, storageKey, JSON.stringify(variants)]
+            `INSERT INTO assets (role, host_slug, event_id, original_filename, mime, size_bytes, page_count, storage_key, variants_json)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+            [role, hostSlug, eventId, req.file.originalname, mime, req.file.size, pageCount, storageKey, JSON.stringify(variants)]
           )
         : sqlite.prepare(
-            `INSERT INTO assets (role, host_slug, original_filename, mime, size_bytes, page_count, storage_key, variants_json) VALUES (?,?,?,?,?,?,?,?)`
-          ).run(role, hostSlug, req.file.originalname, mime, req.file.size, pageCount, storageKey, JSON.stringify(variants));
+            `INSERT INTO assets (role, host_slug, event_id, original_filename, mime, size_bytes, page_count, storage_key, variants_json) VALUES (?,?,?,?,?,?,?,?,?)`
+          ).run(role, hostSlug, eventId, req.file.originalname, mime, req.file.size, pageCount, storageKey, JSON.stringify(variants));
       const id = pg ? result.rows[0].id : result.lastInsertRowid;
 
       const row = await dbGet(`SELECT * FROM assets WHERE id=?`, `SELECT * FROM assets WHERE id=$1`, [id]);
@@ -1308,27 +1321,52 @@ async function countPdfPages(pdfPath) {
 app.patch('/api/assets/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: 'Invalid id' });
-  const { role } = req.body || {};
-  const nextRole = String(role ?? '').trim();
-  if (nextRole && !CONFIG.assetRoles.includes(nextRole)) {
-    return res.status(400).json({ ok: false, error: `Unknown role: ${nextRole}. Allowed: ${CONFIG.assetRoles.concat(['']).join(', ')}` });
-  }
+  const body = req.body || {};
   const row = await dbGet(`SELECT * FROM assets WHERE id=?`, `SELECT * FROM assets WHERE id=$1`, [id]);
   if (!row) return res.status(404).json({ ok: false, error: 'Not found' });
 
+  // Either field is optional — validate only what the caller sent. This lets
+  // the admin UI patch role and eventId independently without clobbering the
+  // untouched field.
+  const wantsRole    = Object.prototype.hasOwnProperty.call(body, 'role');
+  const wantsEventId = Object.prototype.hasOwnProperty.call(body, 'eventId');
+  const nextRole    = wantsRole    ? String(body.role ?? '').trim()    : (row.role || '');
+  const nextEventId = wantsEventId ? String(body.eventId ?? '').trim() : (row.event_id || '');
+  if (wantsRole && nextRole && !CONFIG.assetRoles.includes(nextRole)) {
+    return res.status(400).json({ ok: false, error: `Unknown role: ${nextRole}. Allowed: ${CONFIG.assetRoles.concat(['']).join(', ')}` });
+  }
+
   try {
+    // Re-enforce singleton-by-(role,event_id) whenever either field changes
+    // and the new role is a singleton. The scope uses the NEW values, not
+    // the row's old ones, so moving an asset between events doesn't leave
+    // a stale duplicate behind.
     if (nextRole === 'hero' || nextRole === 'background') {
       await dbRun(
-        `DELETE FROM assets WHERE role=? AND id<>?`,
-        `DELETE FROM assets WHERE role=$1 AND id<>$2`,
-        [nextRole, id]
+        `DELETE FROM assets WHERE role=? AND event_id=? AND id<>?`,
+        `DELETE FROM assets WHERE role=$1 AND event_id=$2 AND id<>$3`,
+        [nextRole, nextEventId, id]
       );
     }
-    await dbRun(
-      `UPDATE assets SET role=? WHERE id=?`,
-      `UPDATE assets SET role=$1 WHERE id=$2`,
-      [nextRole, id]
-    );
+    if (wantsRole && wantsEventId) {
+      await dbRun(
+        `UPDATE assets SET role=?, event_id=? WHERE id=?`,
+        `UPDATE assets SET role=$1, event_id=$2 WHERE id=$3`,
+        [nextRole, nextEventId, id]
+      );
+    } else if (wantsRole) {
+      await dbRun(
+        `UPDATE assets SET role=? WHERE id=?`,
+        `UPDATE assets SET role=$1 WHERE id=$2`,
+        [nextRole, id]
+      );
+    } else if (wantsEventId) {
+      await dbRun(
+        `UPDATE assets SET event_id=? WHERE id=?`,
+        `UPDATE assets SET event_id=$1 WHERE id=$2`,
+        [nextEventId, id]
+      );
+    }
     const updated = await dbGet(`SELECT * FROM assets WHERE id=?`, `SELECT * FROM assets WHERE id=$1`, [id]);
     res.json({ ok: true, asset: assetToPublic(updated) });
   } catch (e) {

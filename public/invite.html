@@ -240,6 +240,20 @@
     .event { padding: 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface2); }
     .event h3 { margin: 0 0 .35em; font-size: 1.18rem; }
     .event .meta { color: var(--fgMuted); font-size:.92em; margin: .3em 0 .8em; font-variant-numeric: tabular-nums; }
+    .event-hero {
+      display: block; width: 100%; height: auto; max-height: 260px;
+      object-fit: cover; border-radius: calc(var(--radius) - 2px);
+      margin: 0 0 12px;
+    }
+    .event-gallery {
+      display: flex; gap: 8px; overflow-x: auto; margin: 8px 0 10px;
+      padding-bottom: 4px; scroll-snap-type: x mandatory;
+    }
+    .event-gallery a { flex: 0 0 auto; scroll-snap-align: start; }
+    .event-gallery img {
+      height: 92px; width: auto; border-radius: 6px;
+      border: 1px solid var(--border); display: block;
+    }
     .chip { display:inline-block; padding:.22em .7em; border-radius: 999px; background: var(--surface2); border:1px solid var(--border); font-size:.78em; margin-right:.4em; }
 
     /* RSVP form. */
@@ -470,7 +484,18 @@
     function pickHeroAsset(payload) {
       const assets = payload.assets || {};
       const heroes = (assets.byRole && assets.byRole.hero) || [];
-      return heroes[0] || null;
+      // Main hero = hero asset with no event_id. Per-event heroes render
+      // inside their own event card, not as the page-level hero.
+      return heroes.find(h => !h.eventId) || null;
+    }
+
+    // Images attached to a specific sub-event, preferring its hero first
+    // then any gallery entries. Caller picks which ones to render.
+    function assetsForEvent(payload, eventId) {
+      const all = (payload.assets && payload.assets.byEvent && payload.assets.byEvent[eventId]) || [];
+      const heroes  = all.filter(a => a.role === 'hero');
+      const gallery = all.filter(a => a.role === 'gallery');
+      return { heroes, gallery, all };
     }
 
     function renderHero(asset, title, subtitle, copy, surfaceHint, event) {
@@ -654,7 +679,7 @@
     // Timeline view for sub-events — replaces the flat grid whenever there
     // are 2+ events. Each event is rendered on the vertical spine with the
     // card offset left/right, and its time shown inline.
-    function renderTimeline(events, copy, features) {
+    function renderTimeline(events, copy, features, payload) {
       if (!events || events.length <= 1) return null;
       const card = ce('section', { class: 'card reveal' });
       card.appendChild(ce('h2', { text: copy.eventsHeader || 'Events' }));
@@ -663,11 +688,25 @@
         const item = ce('div', { class: 't-item' });
         item.appendChild(ce('div', { class: 'dot' }));
         const box = ce('div', { class: 't-card' });
+        const { heroes, gallery } = payload ? assetsForEvent(payload, ev.id || ev.name) : { heroes: [], gallery: [] };
+        const evHero = heroes[0];
+        if (evHero) {
+          box.appendChild(ce('img', { class: 'event-hero', src: `/api/asset/${evHero.id}/full`, alt: ev.name || '', loading: 'lazy' }));
+        }
         const time = [ev.dateLabel, ev.timeLabel].filter(Boolean).join(' \u00b7 ');
         if (time) box.appendChild(ce('div', { class: 't-time', text: time }));
         box.appendChild(ce('h3', { text: ev.name }));
         if (ev.venue) box.appendChild(ce('div', { class: 'meta', text: [ev.venue, ev.address, ev.city].filter(Boolean).join(', ') }));
         if (ev.description) box.appendChild(ce('p', { text: ev.description }));
+        if (gallery.length) {
+          const strip = ce('div', { class: 'event-gallery' });
+          for (const g of gallery) {
+            strip.appendChild(ce('a', { href: `/api/asset/${g.id}/full`, target: '_blank', rel: 'noopener' }, [
+              ce('img', { src: `/api/asset/${g.id}/thumb`, alt: g.filename || '', loading: 'lazy' }),
+            ]));
+          }
+          box.appendChild(strip);
+        }
         const actions = ce('div', { class: 'row' });
         if (ev.mapsUrl) actions.appendChild(ce('a', { class: 'btn small ghost', href: ev.mapsUrl, target: '_blank', rel: 'noopener', text: 'Map' }));
         if (features && features.calendarExport) {
@@ -704,17 +743,36 @@
       return card;
     }
 
-    function renderEvents(events, copy, features) {
+    function renderEvents(events, copy, features, payload) {
       if (!events || events.length <= 1) return null;
       const card = ce('section', { class: 'card reveal' });
       card.appendChild(ce('h2', { text: copy.eventsHeader || 'Events' }));
       const grid = ce('div', { class: 'grid' });
       for (const ev of events) {
         const box = ce('div', { class: 'event' });
+        // Per-event hero (if any) gets rendered above the name. Falls back
+        // to no image gracefully.
+        const { heroes, gallery } = payload ? assetsForEvent(payload, ev.id || ev.name) : { heroes: [], gallery: [] };
+        const evHero = heroes[0];
+        if (evHero) {
+          const img = ce('img', { class: 'event-hero', src: `/api/asset/${evHero.id}/full`, alt: ev.name || '', loading: 'lazy' });
+          box.appendChild(img);
+        }
         box.appendChild(ce('h3', { text: ev.name }));
         const metaBits = [ev.dateLabel, ev.timeLabel, ev.venue].filter(Boolean).join(' \u00b7 ');
         if (metaBits) box.appendChild(ce('div', { class: 'meta', text: metaBits }));
         if (ev.description) box.appendChild(ce('p', { text: ev.description }));
+        // Gallery strip — horizontal-scrolling thumbnails. Clicking opens
+        // the full image in a new tab (lightbox is a later polish).
+        if (gallery.length) {
+          const strip = ce('div', { class: 'event-gallery' });
+          for (const g of gallery) {
+            strip.appendChild(ce('a', { href: `/api/asset/${g.id}/full`, target: '_blank', rel: 'noopener' }, [
+              ce('img', { src: `/api/asset/${g.id}/thumb`, alt: g.filename || '', loading: 'lazy' }),
+            ]));
+          }
+          box.appendChild(strip);
+        }
         const actions = ce('div', { class: 'row' });
         if (ev.mapsUrl) actions.appendChild(ce('a', { class: 'btn small ghost', href: ev.mapsUrl, target: '_blank', rel: 'noopener', text: 'Map' }));
         if (features && features.calendarExport) {
@@ -1062,8 +1120,8 @@
 
       const detailsSection    = renderDetails(payload.event, payload.copy);
       const hostsSection      = renderHosts(payload.hosts, payload.copy);
-      const eventsSection     = renderTimeline(visibleEvents, payload.copy, payload.features)
-                             || renderEvents(visibleEvents, payload.copy, payload.features);
+      const eventsSection     = renderTimeline(visibleEvents, payload.copy, payload.features, payload)
+                             || renderEvents(visibleEvents, payload.copy, payload.features, payload);
       const travelSection     = renderTravel(payload.event, payload.copy);
       const faqSection        = renderFaq(payload.event, payload.copy);
       const registriesSection = renderRegistries(payload.event, payload.copy);

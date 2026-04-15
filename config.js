@@ -397,6 +397,9 @@ module.exports = {
   assetRoles: [
     'hero',
     'background',
+    // Gallery is a non-singleton role — multiple images per event allowed.
+    // Pair with event_id to attach to a sub-event; event_id blank = main.
+    'gallery',
   ],
 
   // ── Messaging templates ──────────────────────────────────────────────────

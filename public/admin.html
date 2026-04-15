@@ -493,39 +493,53 @@
 
     function buildUploadZone() {
       const zone = ce('div', { class: 'upload-zone' });
-      const msg = ce('p', { class: 'muted', text: 'Drop a file here, or click to choose.' });
-      const input = ce('input', { type: 'file', accept: 'application/pdf,image/jpeg,image/png,image/webp,video/mp4', style: 'display:none' });
+      const msg = ce('p', { class: 'muted', text: 'Drop a file here, or click to choose. Pick an event to attach this image to a specific ceremony.' });
+      const input = ce('input', { type: 'file', multiple: 'multiple', accept: 'application/pdf,image/jpeg,image/png,image/webp,video/mp4', style: 'display:none' });
       const roleSel = ce('select', {}, (STATE.config.assetRoles || []).map(r => ce('option', { value: r, text: r })));
       const hostInput = ce('input', { type: 'text', placeholder: 'host slug (optional)', style: 'max-width:180px;' });
-      const btn = ce('button', { class: 'btn', type: 'button', onclick: () => input.click() }, ['Choose file']);
+      // Event dropdown: '' = main event, or one of the configured sub-events.
+      // Omitted entirely when no sub-events are configured, to keep the
+      // single-event flow clean.
+      const subEvents = Array.isArray(STATE.config.events) ? STATE.config.events : [];
+      const eventSel = ce('select', {}, [
+        ce('option', { value: '', text: 'Main event' }),
+        ...subEvents.map(e => ce('option', { value: e.id || e.name, text: e.name || e.id })),
+      ]);
+      const btn = ce('button', { class: 'btn', type: 'button', onclick: () => input.click() }, ['Choose file(s)']);
       const status = ce('p', { class: 'muted' });
 
-      async function doUpload(file) {
-        if (!file) return;
-        status.textContent = `Uploading ${file.name} ${(file.size/1024/1024).toFixed(1)} MB\u2026`;
+      async function uploadOne(file) {
         const fd = new FormData();
         fd.append('file', file);
         fd.append('role', roleSel.value || '');
         fd.append('hostSlug', hostInput.value.trim().toLowerCase());
-        try {
-          const res = await api('/api/assets', { method: 'POST', body: fd });
-          status.textContent = '';
-          toast(`Uploaded "${res.asset.filename}" as "${res.asset.role || 'untagged'}".`, 'success');
-          renderBody();
-        } catch (e) {
-          status.textContent = '';
-          toast(`Upload failed: ${e.message}`, 'error', 6000);
-        }
+        fd.append('eventId', eventSel.value || '');
+        return api('/api/assets', { method: 'POST', body: fd });
       }
 
-      input.addEventListener('change', () => doUpload(input.files[0]));
+      async function doUpload(files) {
+        const list = Array.from(files || []).filter(Boolean);
+        if (!list.length) return;
+        let ok = 0, fail = 0;
+        for (const file of list) {
+          status.textContent = `Uploading ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)\u2026`;
+          try { await uploadOne(file); ok++; }
+          catch (e) { fail++; toast(`Upload failed for ${file.name}: ${e.message}`, 'error', 6000); }
+        }
+        status.textContent = '';
+        if (ok) toast(`Uploaded ${ok} file${ok === 1 ? '' : 's'}.`, 'success');
+        renderBody();
+      }
+
+      input.addEventListener('change', () => doUpload(input.files));
       zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag'); });
       zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
-      zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('drag'); doUpload(e.dataTransfer.files[0]); });
+      zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('drag'); doUpload(e.dataTransfer.files); });
 
       zone.appendChild(msg);
       const hasHosts = ((STATE.config && STATE.config.hosts) || []).length > 0;
       const fieldRow = [ce('label', { class: 'field' }, ['Role', roleSel])];
+      if (subEvents.length) fieldRow.push(ce('label', { class: 'field' }, ['Event', eventSel]));
       if (hasHosts) fieldRow.push(ce('label', { class: 'field' }, ['Host slug', hostInput]));
       zone.appendChild(ce('div', { class: 'row', style: 'justify-content:center; margin:8px 0;' }, fieldRow));
       zone.appendChild(btn);
@@ -544,32 +558,56 @@
           return;
         }
         const roleOptions = ['', ...((STATE.config && STATE.config.assetRoles) || [])];
+        const subEvents = Array.isArray(STATE.config.events) ? STATE.config.events : [];
+        const eventNameFor = (id) => {
+          if (!id) return 'Main event';
+          const ev = subEvents.find(e => (e.id || e.name) === id);
+          return ev ? (ev.name || ev.id) : id;
+        };
         for (const a of STATE.assets) {
           const tile = ce('div', { class: 'asset-tile' });
           if ((a.mime || '').startsWith('video/')) tile.appendChild(ce('video', { src: a.url, controls: 'controls', playsinline: 'playsinline' }));
           else tile.appendChild(ce('img', { src: a.thumbUrl || a.url, alt: a.filename }));
           tile.appendChild(ce('div', { class: 'muted', style: 'margin-top:6px; word-break:break-all; font-size:.82em;', text: a.filename }));
+          // Badge showing which event this asset is attached to.
+          tile.appendChild(ce('div', { class: 'chip', style: 'margin:4px 0;', text: eventNameFor(a.eventId) }));
           const roleSel = ce('select', { 'aria-label': 'Asset role', style: 'max-width:140px;' },
             roleOptions.map(r => ce('option', { value: r, selected: a.role === r ? 'selected' : undefined, text: r || 'untagged' }))
           );
-          const roleStatus = ce('span', { class: 'subtle', style: 'font-size:.78em;' });
-          roleSel.addEventListener('change', async () => {
-            const next = roleSel.value;
-            roleSel.disabled = true;
-            roleStatus.textContent = 'Saving…';
+          const eventSel = ce('select', { 'aria-label': 'Asset event', style: 'max-width:140px;' },
+            [ce('option', { value: '', selected: !a.eventId ? 'selected' : undefined, text: 'Main event' }),
+             ...subEvents.map(e => {
+               const id = e.id || e.name;
+               return ce('option', { value: id, selected: a.eventId === id ? 'selected' : undefined, text: e.name || id });
+             })]
+          );
+          const status = ce('span', { class: 'subtle', style: 'font-size:.78em;' });
+          async function patchField(body, reverter) {
+            status.textContent = 'Saving…';
             try {
-              await api(`/api/assets/${a.id}`, { method: 'PATCH', body: { role: next } });
-              roleStatus.textContent = '';
+              await api(`/api/assets/${a.id}`, { method: 'PATCH', body });
+              status.textContent = '';
               refreshAssets(grid);
             } catch (e) {
-              roleStatus.textContent = e.message;
-              roleSel.value = a.role || '';
-            } finally {
-              roleSel.disabled = false;
+              status.textContent = e.message;
+              reverter();
             }
+          }
+          roleSel.addEventListener('change', () => {
+            roleSel.disabled = true;
+            patchField({ role: roleSel.value }, () => { roleSel.value = a.role || ''; })
+              .finally(() => { roleSel.disabled = false; });
           });
+          eventSel.addEventListener('change', () => {
+            eventSel.disabled = true;
+            patchField({ eventId: eventSel.value }, () => { eventSel.value = a.eventId || ''; })
+              .finally(() => { eventSel.disabled = false; });
+          });
+          const selectors = [ce('label', { class: 'field' }, ['Role', roleSel])];
+          if (subEvents.length) selectors.push(ce('label', { class: 'field' }, ['Event', eventSel]));
           tile.appendChild(ce('div', { class: 'foot' }, [
-            ce('div', { class: 'row', style: 'gap:6px;' }, [roleSel, roleStatus]),
+            ce('div', { class: 'row', style: 'gap:6px; flex-wrap:wrap;' }, selectors),
+            status,
             ce('button', { class: 'btn small danger', onclick: async () => {
               if (!confirm(`Delete "${a.filename}"?`)) return;
               await api(`/api/assets/${a.id}`, { method: 'DELETE' });
