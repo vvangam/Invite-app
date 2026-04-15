@@ -761,7 +761,9 @@
       }
       form.appendChild(statusWrap);
 
+      // Hoisted together so renderPlusOnes can call renderDietary without TDZ.
       let plusOnesHost = null;
+      let dietaryHost  = null;
       function renderPlusOnes() {
         if (!plusOnesHost) return;
         plusOnesHost.innerHTML = '';
@@ -813,7 +815,6 @@
         renderEventButtons();
       }
 
-      let dietaryHost = null;
       function renderDietary() {
         if (!dietaryHost) return;
         dietaryHost.innerHTML = '';
@@ -1027,7 +1028,19 @@
 
     boot().catch(err => {
       console.error('[invite] boot failed:', err);
-      document.getElementById('app').innerHTML = '<div class="card not-found"><p>Something went wrong.</p></div>';
+      const detail = (err && (err.message || String(err))) || 'Unknown error';
+      const app = document.getElementById('app');
+      app.innerHTML = '';
+      const card = document.createElement('div');
+      card.className = 'card not-found';
+      const h = document.createElement('p');
+      h.textContent = 'Something went wrong.';
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'text-align:left; white-space:pre-wrap; font-size:.78em; color: var(--fgMuted); margin-top:8px;';
+      pre.textContent = detail;
+      card.appendChild(h);
+      card.appendChild(pre);
+      app.appendChild(card);
     });
   })();
   </script>
