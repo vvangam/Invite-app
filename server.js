@@ -7,7 +7,6 @@ const path    = require('node:path');
 const fs      = require('node:fs');
 const fsp     = require('node:fs/promises');
 const { spawn } = require('node:child_process');
-const { DatabaseSync } = require('node:sqlite');
 const { Pool } = require('pg');
 
 const CONFIG = require('./config');
@@ -25,7 +24,18 @@ const pg = DATABASE_URL ? new Pool({
   ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
 }) : null;
 
-const sqlite = !pg ? new DatabaseSync(process.env.DB_PATH || path.join(__dirname, 'invite.db')) : null;
+// node:sqlite is experimental on Node 22 and requires --experimental-sqlite.
+// Only load it when Postgres isn't configured (local dev fallback).
+let sqlite = null;
+if (!pg) {
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    sqlite = new DatabaseSync(process.env.DB_PATH || path.join(__dirname, 'invite.db'));
+  } catch (err) {
+    console.error('SQLite unavailable and no DATABASE_URL set. Configure Postgres on Railway.', err.message);
+    process.exit(1);
+  }
+}
 
 function sqlParam(i) { return pg ? `$${i}` : '?'; }
 
