@@ -129,13 +129,19 @@ Take the page from one long invite to a navigable site, mirroring Joy/Zola.
 The admin currently hides the highest-leverage actions behind the
 "save → open new tab → reload" loop and a single linear table.
 
-- [ ] **First-run onboarding wizard** (Settings tab modal).
+- [x] **First-run onboarding wizard** (full-screen modal).
   5 steps: pick preset → event title → date/venue → upload hero →
-  add 1 host. Skip if config already has a non-default title.
-  Persists progress in `localStorage` so you can resume.
-- [ ] **Inline preview-as-guest pane.** Right-side iframe (toggle:
-  desktop / tablet / mobile widths). When admin clicks a preset chip
-  or saves a field, iframe reloads. Kills the new-tab dance.
+  add host. Fires on PIN-success / boot when `event.title` is still
+  a default placeholder. "Skip setup" + per-step Back/Next, progress
+  bar, partial progress persisted in `localStorage` under
+  `invite-admin:wizardDraft`; completion flag at `:wizardDone`.
+- [x] **Inline preview-as-guest pane.** Right-side `<aside>` with an
+  iframe pointing at `/invite.html`. Viewport toggle buttons switch
+  between desktop (100%), tablet (768×1024), mobile (375×667).
+  Toggle + viewport choice persist in `localStorage`. Save triggers
+  full Settings re-render so the iframe picks up fresh config
+  automatically; explicit Reload button for manual refresh.
+  Collapses to single column below 1100px viewport width.
 - [x] **Toast notifications** — global `toast(message, variant, duration)`
   with success/error/info variants, auto-dismiss, click-to-close.
   Replaced inline `.muted` status in: asset upload, add-guest, settings

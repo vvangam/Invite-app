@@ -173,6 +173,69 @@
       .btn:hover, .stat:hover, .preset-chip:hover { transform: none; }
     }
 
+    /* Onboarding wizard modal */
+    .wizard-overlay {
+      position: fixed; inset: 0; z-index: 300;
+      background: color-mix(in srgb, var(--bg) 85%, transparent);
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px; animation: wiz-fade 180ms ease;
+    }
+    @keyframes wiz-fade { from { opacity: 0 } to { opacity: 1 } }
+    .wizard-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radiusLg); box-shadow: var(--shadow2);
+      width: min(92vw, 560px); max-height: 90vh; overflow-y: auto;
+      padding: 28px; display: grid; gap: 18px;
+    }
+    .wizard-progress {
+      display: flex; gap: 6px; align-items: center;
+    }
+    .wizard-progress .dot {
+      flex: 1 1 auto; height: 4px; border-radius: 2px;
+      background: var(--border); transition: background var(--motionBase) ease;
+    }
+    .wizard-progress .dot.done   { background: var(--success); }
+    .wizard-progress .dot.active { background: var(--accent); }
+    .wizard-card h2 { margin: 0; font-family: var(--fontDisplay); font-size: 1.5em; }
+    .wizard-card .hint { color: var(--fgMuted); margin: -6px 0 6px; }
+    .wizard-actions { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .wizard-actions .right { display: flex; gap: 8px; margin-left: auto; }
+    .wizard-card .preset-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+    /* Settings split layout with inline invite preview */
+    .settings-split { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
+    .settings-split.with-preview { grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); }
+    .settings-left { display: grid; gap: 16px; min-width: 0; }
+    .settings-preview {
+      position: sticky; top: 78px; display: flex; flex-direction: column; gap: 10px;
+      background: var(--surface); border:1px solid var(--border); border-radius: var(--radius);
+      padding: 12px; box-shadow: var(--shadow1); max-height: calc(100dvh - 96px);
+    }
+    .settings-preview h3 { margin: 0; font-size: .95em; letter-spacing: var(--trackingLoose); text-transform: uppercase; color: var(--fgMuted); }
+    .settings-preview .viewport-switch { display:flex; gap:6px; flex-wrap:wrap; }
+    .settings-preview .viewport-switch button {
+      border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+      border-radius: var(--radiusSm); padding: 5px 10px; font: inherit; font-size: .85em; cursor: pointer;
+    }
+    .settings-preview .viewport-switch button.active { background: var(--accent); color: var(--accentFg); border-color: var(--accent); }
+    .settings-preview .frame-wrap {
+      background: var(--surface2); border-radius: var(--radiusSm); overflow: auto;
+      flex: 1 1 auto; display: flex; justify-content: center; align-items: flex-start;
+      padding: 8px; min-height: 280px;
+    }
+    .settings-preview .frame-wrap iframe {
+      border: 1px solid var(--border); border-radius: var(--radiusSm);
+      background: var(--bg); display: block; transition: width var(--motionBase) ease;
+    }
+    .settings-preview .frame-wrap.vp-desktop iframe { width: 100%; height: 720px; }
+    .settings-preview .frame-wrap.vp-tablet iframe  { width: 768px;  height: 1024px; transform-origin: top center; }
+    .settings-preview .frame-wrap.vp-mobile iframe  { width: 375px;  height: 667px; }
+    @media (max-width: 1100px) {
+      .settings-split.with-preview { grid-template-columns: 1fr; }
+      .settings-preview { position: static; max-height: none; }
+    }
+
     /* Guest-list filter toolbar + bulk action bar */
     .guest-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin: 8px 0 12px; }
     .guest-toolbar .search { flex:1 1 220px; min-width: 0; }
@@ -1405,19 +1468,86 @@
       saveBar.appendChild(meta);
       saveBar.appendChild(ce('div', { class: 'row' }, [previewLink, saveBtn]));
 
-      host.appendChild(themeCard);
-      host.appendChild(identity);
-      host.appendChild(travelCard);
-      host.appendChild(regCard);
-      host.appendChild(faqCard);
-      host.appendChild(copyCard);
-      host.appendChild(hostsCard);
-      host.appendChild(eventsCard);
-      host.appendChild(rsvpCard);
-      host.appendChild(msgCard);
-      host.appendChild(segCard);
-      host.appendChild(featCard);
-      host.appendChild(saveBar);
+      // Two-column layout: editor on the left, live invite preview on the right.
+      // The preview pane can be toggled; its state persists in localStorage so
+      // admins who like the side-by-side view don't need to re-enable it.
+      const PREVIEW_KEY = 'invite-admin:previewOn';
+      const VIEWPORT_KEY = 'invite-admin:previewViewport';
+      const split = ce('div', { class: 'settings-split' });
+      const left = ce('div', { class: 'settings-left' });
+      left.appendChild(themeCard);
+      left.appendChild(identity);
+      left.appendChild(travelCard);
+      left.appendChild(regCard);
+      left.appendChild(faqCard);
+      left.appendChild(copyCard);
+      left.appendChild(hostsCard);
+      left.appendChild(eventsCard);
+      left.appendChild(rsvpCard);
+      left.appendChild(msgCard);
+      left.appendChild(segCard);
+      left.appendChild(featCard);
+      left.appendChild(saveBar);
+      split.appendChild(left);
+
+      let previewFrame = null;
+      let previewWrap  = null;
+      let previewOn = localStorage.getItem(PREVIEW_KEY) === '1';
+      let viewport = localStorage.getItem(VIEWPORT_KEY) || 'desktop';
+      const previewAside = ce('aside', { class: 'settings-preview', style: previewOn ? '' : 'display:none' });
+      const previewHead = ce('div', { class: 'row', style: 'justify-content:space-between; align-items:center; gap:8px;' });
+      previewHead.appendChild(ce('h3', { text: 'Live preview' }));
+      const reloadBtn = ce('button', { class: 'btn small ghost', onclick: () => reloadPreview() }, ['Reload']);
+      previewHead.appendChild(reloadBtn);
+      previewAside.appendChild(previewHead);
+
+      const vpSwitch = ce('div', { class: 'viewport-switch' });
+      for (const v of ['desktop', 'tablet', 'mobile']) {
+        const btn = ce('button', { type: 'button', 'data-vp': v, text: v[0].toUpperCase() + v.slice(1) });
+        if (v === viewport) btn.classList.add('active');
+        btn.addEventListener('click', () => {
+          viewport = v;
+          localStorage.setItem(VIEWPORT_KEY, v);
+          vpSwitch.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.vp === v));
+          previewWrap.className = `frame-wrap vp-${v}`;
+        });
+        vpSwitch.appendChild(btn);
+      }
+      previewAside.appendChild(vpSwitch);
+
+      previewWrap = ce('div', { class: `frame-wrap vp-${viewport}` });
+      previewFrame = ce('iframe', { src: '/invite.html', title: 'Invite preview' });
+      previewWrap.appendChild(previewFrame);
+      previewAside.appendChild(previewWrap);
+      split.appendChild(previewAside);
+
+      function reloadPreview() {
+        if (!previewFrame) return;
+        // Force a fresh fetch — cache-bust so the bootstrap payload is re-read.
+        previewFrame.src = '/invite.html?_=' + Date.now();
+      }
+
+      // Preview-toggle button lives in the save bar, next to the external link.
+      const togglePreviewBtn = ce('button', {
+        type: 'button',
+        class: 'btn small ghost',
+      }, [previewOn ? 'Hide preview' : 'Show preview']);
+      togglePreviewBtn.addEventListener('click', () => {
+        previewOn = !previewOn;
+        localStorage.setItem(PREVIEW_KEY, previewOn ? '1' : '0');
+        previewAside.style.display = previewOn ? '' : 'none';
+        split.classList.toggle('with-preview', previewOn);
+        togglePreviewBtn.textContent = previewOn ? 'Hide preview' : 'Show preview';
+        if (previewOn) reloadPreview();
+      });
+      // Insert the toggle before the external-link / save button pair.
+      saveBar.querySelector('.row').prepend(togglePreviewBtn);
+      if (previewOn) split.classList.add('with-preview');
+
+      // Successful saves call renderTabs(), which rebuilds this tab and
+      // recreates the iframe — no explicit reload hook needed here.
+
+      host.appendChild(split);
     }
 
     function renderExportsTab(host) {
@@ -1457,6 +1587,256 @@
       host.appendChild(card);
     }
 
+    // ─── Onboarding wizard ────────────────────────────────────────────────
+    // Launched once on first admin sign-in when the event title is still a
+    // default placeholder. Captures the minimum config needed to produce a
+    // non-embarrassing invite — everything else can be polished in Settings.
+    const WIZARD_DRAFT_KEY = 'invite-admin:wizardDraft';
+    const WIZARD_DONE_KEY  = 'invite-admin:wizardDone';
+    const DEFAULT_TITLES = new Set(['', 'Our Celebration', 'Wedding Title', 'Event Title']);
+
+    async function shouldRunWizard() {
+      if (localStorage.getItem(WIZARD_DONE_KEY) === '1') return false;
+      // /api/bootstrap intentionally omits event for the public payload — we
+      // have to ask the admin-only config endpoint to get the real title.
+      try {
+        const r = await api('/api/config');
+        const title = ((r.config && r.config.event && r.config.event.title) || '').trim();
+        return DEFAULT_TITLES.has(title);
+      } catch {
+        return false;
+      }
+    }
+
+    async function runOnboardingWizard() {
+      const overlay = ce('div', { class: 'wizard-overlay', role: 'dialog', 'aria-modal': 'true' });
+      const card = ce('div', { class: 'wizard-card' });
+      overlay.appendChild(card);
+      document.body.appendChild(overlay);
+      // Load any partial progress from a previous session.
+      let data = {};
+      try { data = JSON.parse(localStorage.getItem(WIZARD_DRAFT_KEY) || '{}'); } catch {}
+      // Seed from server defaults so users who are partway through don't lose
+      // whatever they might've edited in Settings before reloading.
+      const ev = (STATE.config && STATE.config.event) || {};
+      data.title ||= DEFAULT_TITLES.has((ev.title || '').trim()) ? '' : ev.title;
+      data.dateISO ||= ev.dateISO || '';
+      data.venue ||= ev.venue || '';
+      data.preset ||= (STATE.config && STATE.config.theme && STATE.config.theme.active) || '';
+      data.hostName ||= '';
+      data.hostRole ||= '';
+      let step = Math.max(1, Math.min(5, Number(data._step) || 1));
+
+      function saveDraft() {
+        data._step = step;
+        localStorage.setItem(WIZARD_DRAFT_KEY, JSON.stringify(data));
+      }
+
+      function close(done) {
+        if (done) {
+          localStorage.setItem(WIZARD_DONE_KEY, '1');
+          localStorage.removeItem(WIZARD_DRAFT_KEY);
+        }
+        overlay.remove();
+      }
+
+      function skipAll() {
+        if (!confirm('Skip setup? You can always edit everything in Settings.')) return;
+        localStorage.setItem(WIZARD_DONE_KEY, '1');
+        localStorage.removeItem(WIZARD_DRAFT_KEY);
+        close(false);
+        overlay.remove();
+      }
+
+      // Renders the current step's body. Each step returns a DOM node + a
+      // validator that must return true before the "Next" button activates.
+      function renderStep() {
+        card.innerHTML = '';
+        const progress = ce('div', { class: 'wizard-progress' });
+        for (let i = 1; i <= 5; i++) {
+          progress.appendChild(ce('div', { class: 'dot ' + (i < step ? 'done' : i === step ? 'active' : '') }));
+        }
+        card.appendChild(progress);
+
+        let body, canAdvance = () => true;
+        if (step === 1) {
+          const { node, isValid } = stepPreset(data);
+          body = node; canAdvance = isValid;
+        } else if (step === 2) {
+          const { node, isValid } = stepTitle(data);
+          body = node; canAdvance = isValid;
+        } else if (step === 3) {
+          const { node, isValid } = stepDateVenue(data);
+          body = node; canAdvance = isValid;
+        } else if (step === 4) {
+          const { node, isValid } = stepHero(data);
+          body = node; canAdvance = isValid;
+        } else {
+          const { node, isValid } = stepHost(data);
+          body = node; canAdvance = isValid;
+        }
+        card.appendChild(body);
+
+        const actions = ce('div', { class: 'wizard-actions' });
+        const skip = ce('button', { class: 'btn ghost', type: 'button', onclick: skipAll }, ['Skip setup']);
+        actions.appendChild(skip);
+        const right = ce('div', { class: 'right' });
+        if (step > 1) {
+          right.appendChild(ce('button', { class: 'btn ghost', type: 'button', onclick: () => { step--; saveDraft(); renderStep(); } }, ['Back']));
+        }
+        const next = ce('button', {
+          class: 'btn', type: 'button',
+          onclick: async () => {
+            if (!canAdvance()) { toast('Fill the required fields first.', 'error', 3500); return; }
+            saveDraft();
+            if (step < 5) { step++; saveDraft(); renderStep(); return; }
+            await finish();
+          },
+        }, [step < 5 ? 'Next' : 'Finish']);
+        right.appendChild(next);
+        actions.appendChild(right);
+        card.appendChild(actions);
+      }
+
+      function stepPreset(data) {
+        const wrap = ce('div');
+        wrap.appendChild(ce('h2', { text: 'Pick a look' }));
+        wrap.appendChild(ce('p', { class: 'hint', text: 'Start with a theme — you can fine-tune colors later in Settings.' }));
+        const presets = STATE.config.themePresetsFull || STATE.config.themePresets || [];
+        const grid = ce('div', { class: 'preset-grid grid' });
+        for (const p of presets) {
+          const swatch = ce('div', { class: 'preset-swatch' });
+          for (const c of (p.swatch || ['#eee','#888','#222'])) {
+            const sw = ce('span'); sw.style.background = c; swatch.appendChild(sw);
+          }
+          const chip = ce('button', {
+            type: 'button',
+            class: 'preset-chip' + (data.preset === p.id ? ' active' : ''),
+            onclick: () => {
+              data.preset = p.id;
+              if (p.tokens) applyPreset({ tokens: p.tokens, fontHref: p.fontHref || '' });
+              grid.querySelectorAll('.preset-chip').forEach((c, i) => c.classList.toggle('active', presets[i].id === p.id));
+            },
+          });
+          chip.appendChild(swatch);
+          chip.appendChild(ce('div', { class: 'label', text: p.label || p.id }));
+          if (p.hint) chip.appendChild(ce('div', { class: 'hint', text: p.hint }));
+          grid.appendChild(chip);
+        }
+        wrap.appendChild(grid);
+        return { node: wrap, isValid: () => !!data.preset || !presets.length };
+      }
+
+      function stepTitle(data) {
+        const wrap = ce('div');
+        wrap.appendChild(ce('h2', { text: "What's the event?" }));
+        wrap.appendChild(ce('p', { class: 'hint', text: 'The title shown front-and-centre on the invite.' }));
+        const input = ce('input', { type: 'text', placeholder: 'e.g. Aditi & Rohan · Wedding', value: data.title || '' });
+        input.addEventListener('input', () => { data.title = input.value.trim(); });
+        wrap.appendChild(ce('label', { class: 'field' }, ['Event title', input]));
+        setTimeout(() => input.focus(), 50);
+        return { node: wrap, isValid: () => (data.title || '').trim().length >= 2 };
+      }
+
+      function stepDateVenue(data) {
+        const wrap = ce('div');
+        wrap.appendChild(ce('h2', { text: 'When & where' }));
+        wrap.appendChild(ce('p', { class: 'hint', text: 'We use the date for the countdown and calendar file.' }));
+        const dateInput = ce('input', { type: 'datetime-local', value: data.dateISO ? data.dateISO.slice(0, 16) : '' });
+        dateInput.addEventListener('input', () => {
+          const v = dateInput.value;
+          data.dateISO = v ? new Date(v).toISOString() : '';
+        });
+        wrap.appendChild(ce('label', { class: 'field' }, ['Date & time', dateInput]));
+        const venueInput = ce('input', { type: 'text', placeholder: 'e.g. The Grand Ballroom, Mumbai', value: data.venue || '' });
+        venueInput.addEventListener('input', () => { data.venue = venueInput.value.trim(); });
+        wrap.appendChild(ce('label', { class: 'field' }, ['Venue', venueInput]));
+        return { node: wrap, isValid: () => true };
+      }
+
+      function stepHero(data) {
+        const wrap = ce('div');
+        wrap.appendChild(ce('h2', { text: 'Upload your invite' }));
+        wrap.appendChild(ce('p', { class: 'hint', text: 'PDF, JPG, PNG or MP4. This is the art we frame with the RSVP — optional.' }));
+        const msg = ce('p', { class: 'muted', text: data.heroUploaded ? '✓ Hero uploaded.' : 'No hero uploaded yet.' });
+        const input = ce('input', { type: 'file', accept: 'image/*,video/*,application/pdf' });
+        input.addEventListener('change', async () => {
+          const file = input.files[0];
+          if (!file) return;
+          msg.textContent = `Uploading ${file.name}…`;
+          const fd = new FormData();
+          fd.append('file', file);
+          fd.append('role', 'hero');
+          try {
+            await api('/api/assets', { method: 'POST', body: fd });
+            data.heroUploaded = true;
+            msg.textContent = '✓ Hero uploaded.';
+            saveDraft();
+          } catch (e) {
+            msg.textContent = 'Upload failed: ' + e.message;
+          }
+        });
+        wrap.appendChild(input);
+        wrap.appendChild(msg);
+        return { node: wrap, isValid: () => true };
+      }
+
+      function stepHost(data) {
+        const wrap = ce('div');
+        wrap.appendChild(ce('h2', { text: 'Who is hosting?' }));
+        wrap.appendChild(ce('p', { class: 'hint', text: 'Optional — add a name so guests can reach out. Add more in Settings.' }));
+        const nameInput = ce('input', { type: 'text', placeholder: 'e.g. The Sharma Family', value: data.hostName || '' });
+        nameInput.addEventListener('input', () => { data.hostName = nameInput.value.trim(); });
+        wrap.appendChild(ce('label', { class: 'field' }, ['Host name', nameInput]));
+        const roleInput = ce('input', { type: 'text', placeholder: 'e.g. Parents of the bride', value: data.hostRole || '' });
+        roleInput.addEventListener('input', () => { data.hostRole = roleInput.value.trim(); });
+        wrap.appendChild(ce('label', { class: 'field' }, ['Relationship / role', roleInput]));
+        return { node: wrap, isValid: () => true };
+      }
+
+      async function finish() {
+        try {
+          // Fetch fresh config so we PUT back a merged view, not a partial one.
+          const cfgRes = await api('/api/config');
+          const current = cfgRes.config || {};
+          current.event ||= {};
+          current.hosts ||= [];
+          if (data.title) current.event.title = data.title;
+          if (data.dateISO) {
+            current.event.dateISO = data.dateISO;
+            // Populate dateLabel with a humane fallback if empty.
+            if (!current.event.dateLabel) {
+              try {
+                current.event.dateLabel = new Date(data.dateISO).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' });
+              } catch { /* leave unset */ }
+            }
+          }
+          if (data.venue) current.event.venue = data.venue;
+          if (data.preset) {
+            current.theme ||= {};
+            current.themePresetActive = data.preset;
+          }
+          if (data.hostName) {
+            const slug = (data.hostName || 'host').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'host';
+            // Only add if a host with the same slug doesn't already exist.
+            if (!current.hosts.some(h => h.slug === slug)) {
+              current.hosts.push({ slug, name: data.hostName, role: data.hostRole || '' });
+            }
+          }
+          await api('/api/config', { method: 'PUT', body: { config: current } });
+          await loadBootstrap();
+          toast('Setup complete — welcome to your invite!', 'success');
+          close(true);
+          renderTabs();
+          renderBody();
+        } catch (e) {
+          toast('Could not save: ' + e.message, 'error', 6000);
+        }
+      }
+
+      renderStep();
+    }
+
     // ─── Boot ─────────────────────────────────────────────────────────────
     async function boot() {
       await loadBootstrap();
@@ -1464,6 +1844,7 @@
       renderTabs();
       renderBody();
       hidePinGate();
+      if (await shouldRunWizard()) runOnboardingWizard();
     }
 
     qs('#pin-form').addEventListener('submit', async (e) => {
@@ -1474,6 +1855,7 @@
         hidePinGate();
         renderTabs();
         renderBody();
+        if (await shouldRunWizard()) runOnboardingWizard();
       } catch (err) { qs('#pin-err').textContent = err.message; }
     });
 
