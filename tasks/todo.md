@@ -182,20 +182,29 @@ The admin currently hides the highest-leverage actions behind the
 WhatsApp open-link is fine for India but breaks for international or
 guests without WhatsApp. Add channels + reminders.
 
-- [ ] **Email channel** — abstract `messaging` to `messaging.channels:
-  { whatsapp, email }`. Implement email via Resend (cleaner DX than
-  SendGrid). Per-guest send button picks best channel based on
-  available `mobileNumber` / `emailAddress`. New env: `RESEND_API_KEY`.
-- [ ] **Bulk send actually bulk** — given a selection from the
-  guests-tab bulk action, queue a per-guest send; show progress
-  bar; auto-set `inviteStatus='Sent'` on success.
-- [ ] **Scheduled reminder job** — simple in-process timer:
-  every 6 hours, check guests with `rsvp='Pending'` AND `inviteStatus='Sent'`
-  AND deadline-reminder window. Send via channel. Log in `rsvp_events`.
-  Toggle: `features.autoReminders`. Settings field for window
-  (e.g., 14 days, 7 days, 1 day).
-- [ ] **Notify admin on RSVP** — optional email to `event.contactEmail`
-  on each new submission. Toggle: `features.adminNotifications`.
+- [x] **Email channel** — `messaging.channels: { whatsapp, email }` +
+  `emailInviteSubject` / `emailReminderSubject` / per-guest Resend send via
+  `POST /api/send-invite`. `features.emailChannel` is env-gated at request
+  time (needs `RESEND_API_KEY` + `RESEND_FROM_EMAIL`). Admin UI shows email
+  buttons in the guest table, mobile cards, and the add-guest post-submit
+  panel. Pure `fetch`, zero SDK deps.
+- [x] **Bulk send actually bulk** — "Send email" button on the bulk bar
+  iterates selection one-at-a-time, swaps the bar for a `<progress>` +
+  running count, and toasts a summary (`sent / failed / skipped-no-email`)
+  at the end. Server-side flip to `invite_status='Sent'` means the list
+  refresh after the run reflects delivery without a separate call.
+- [x] **Scheduled reminder job** — `setInterval(6h)` + warm-up `setTimeout`
+  run `runReminderCycle()`. Picks smallest active window from
+  `messaging.reminderWindows` (default [14, 7, 1]), finds pending guests
+  missing a `reminder_sent_<N>d` event, and sends. Gated on
+  `features.autoReminders` + `emailChannelEnabled()` + future deadline.
+  Admin UI adds the toggle + windows editor in Settings → Messaging →
+  Automation.
+- [x] **Notify admin on RSVP** — `notifyAdminOfRsvp()` fires
+  fire-and-forget after both the token and fallback RSVP paths. Emails
+  `event.contactEmail` with RSVP summary + admin-panel link. Reply-To is
+  the guest's email when present. Feature-flagged via
+  `features.adminNotifications`.
 
 ## Phase 6 — Analytics & shareability (½ day)
 

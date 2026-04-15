@@ -421,6 +421,42 @@ function startReminderScheduler() {
   setTimeout(runReminderCycle, 30_000).unref();
 }
 
+// Fire-and-forget notification to the event host on every new RSVP
+// submission. Gated by features.adminNotifications + email channel +
+// event.contactEmail — all three must be set. Failures are logged and
+// swallowed: we never want an admin-notify bug to break a guest's RSVP.
+async function notifyAdminOfRsvp({ cfg, guest, req }) {
+  try {
+    if (!cfg.features || !cfg.features.adminNotifications) return;
+    if (!emailChannelEnabled()) return;
+    const to = String((cfg.event && cfg.event.contactEmail) || '').trim();
+    if (!to) return;
+    const eventTitle = (cfg.event && cfg.event.title) || 'Event';
+    const partySize = guest.confirmed_party_size != null ? guest.confirmed_party_size : guest.party_size;
+    const lines = [
+      `${guest.guest_name || 'Someone'} just RSVP'd for ${eventTitle}.`,
+      '',
+      `Status:      ${guest.rsvp || 'Pending'}`,
+      `Party size:  ${partySize}`,
+      guest.email_address ? `Email:       ${guest.email_address}` : '',
+      guest.mobile_number ? `Phone:       ${guest.mobile_number}` : '',
+      guest.segment       ? `Segment:     ${guest.segment}` : '',
+      guest.notes         ? `Notes:       ${guest.notes}` : '',
+    ].filter(Boolean).join('\n');
+    const subject = `RSVP · ${guest.guest_name || 'Guest'} · ${guest.rsvp || 'Pending'}`;
+    const host  = (req && req.headers && req.headers.host) || 'localhost';
+    const proto = (req && req.headers && req.headers['x-forwarded-proto']) || (req && req.protocol) || 'https';
+    const replyTo = guest.email_address ? String(guest.email_address).trim() : '';
+    await sendEmailViaResend({
+      to, subject, text: lines,
+      html: textToHtml(lines + `\n\nAdmin: ${proto}://${host}/admin`),
+      replyTo: replyTo || undefined,
+    });
+  } catch (e) {
+    console.error('[admin-notify] failed:', e.message);
+  }
+}
+
 // ── Auth (DB-backed sessions, persist across restarts) ──────────────────────
 async function isValidSession(token) {
   if (!token) return false;
@@ -936,6 +972,8 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
           `SELECT * FROM guests WHERE invite_token=$1`,
           [trimmedToken]
         );
+        // Fire-and-forget — don't block the response on the notification.
+        notifyAdminOfRsvp({ cfg, guest: updated, req });
         return res.json({ ok: true, guest: guestToFrontend(updated) });
       }
     }
@@ -955,6 +993,8 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
       [fallbackToken]
     );
     await logRsvpEvent(inserted?.id, 'submitted', req);
+    // Fire-and-forget — don't block the response on the notification.
+    notifyAdminOfRsvp({ cfg, guest: inserted, req });
     res.json({ ok: true, guest: guestToFrontend(inserted) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
