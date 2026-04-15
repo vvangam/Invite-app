@@ -186,8 +186,15 @@
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radiusLg); box-shadow: var(--shadow2);
       width: min(92vw, 560px); max-height: 90vh; overflow-y: auto;
-      padding: 28px; display: grid; gap: 18px;
+      padding: 28px; display: grid; gap: 18px; position: relative;
     }
+    .wizard-close {
+      position: absolute; top: 10px; right: 10px;
+      width: 32px; height: 32px; border-radius: 50%;
+      border: 0; background: transparent; color: var(--fgMuted);
+      font-size: 20px; line-height: 1; cursor: pointer;
+    }
+    .wizard-close:hover { background: var(--border); color: var(--fg); }
     .wizard-progress {
       display: flex; gap: 6px; align-items: center;
     }
@@ -1893,6 +1900,23 @@
       }
     }
 
+    // Convert an ISO date string to the format <input type="datetime-local">
+    // expects ("YYYY-MM-DDTHH:MM"), preserving the viewer's local timezone.
+    // Without this, seeding the input with `isoString.slice(0, 16)` shows
+    // UTC time labelled as local, so a 2pm IST pick reappears as 8:30am.
+    function isoToLocalDatetime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    function localDatetimeToIso(local) {
+      if (!local) return '';
+      const d = new Date(local); // treats local as local tz, which is what we want
+      return isNaN(d.getTime()) ? '' : d.toISOString();
+    }
+
     async function runOnboardingWizard() {
       const overlay = ce('div', { class: 'wizard-overlay', role: 'dialog', 'aria-modal': 'true' });
       const card = ce('div', { class: 'wizard-card' });
@@ -1909,6 +1933,11 @@
         serverCfg = (r && r.config) || {};
       } catch {}
 
+      // Remember the live preset so we can roll back if the user closes the
+      // wizard without finishing — otherwise step 1 permanently re-themes
+      // the admin page with an unsaved preview.
+      const originalPreset = serverCfg.themePresetActive || '';
+
       // Load any partial progress. localStorage draft only wins when it has
       // a value; otherwise we seed from the live server config.
       let data = {};
@@ -1920,74 +1949,94 @@
       data.preset ||= serverCfg.themePresetActive || '';
       data.hostName ||= '';
       data.hostRole ||= '';
-      let step = Math.max(1, Math.min(5, Number(data._step) || 1));
+
+      // Step list is built dynamically so we can drop the hero step when
+      // asset uploads are disabled. Keeps step count + progress dots honest.
+      const steps = [
+        { name: 'preset',    render: stepPreset },
+        { name: 'title',     render: stepTitle },
+        { name: 'dateVenue', render: stepDateVenue },
+        ...(STATE.features.assetUpload ? [{ name: 'hero', render: stepHero }] : []),
+        { name: 'host',      render: stepHost },
+      ];
+      const totalSteps = steps.length;
+      // Clamp stored step index to the current step count (features may have
+      // changed between sessions, shrinking the list).
+      let stepIdx = Math.max(0, Math.min(totalSteps - 1, Number(data._step) || 0));
 
       function saveDraft() {
-        data._step = step;
+        data._step = stepIdx;
         localStorage.setItem(WIZARD_DRAFT_KEY, JSON.stringify(data));
       }
 
-      function close(done) {
+      function close({ done, revertPreset }) {
         if (done) {
           localStorage.setItem(WIZARD_DONE_KEY, '1');
           localStorage.removeItem(WIZARD_DRAFT_KEY);
         }
+        if (revertPreset) {
+          const presets = STATE.config.themePresetsFull || STATE.config.themePresets || [];
+          const orig = presets.find(p => p.id === originalPreset);
+          if (orig && orig.tokens) applyPreset({ tokens: orig.tokens, fontHref: orig.fontHref || '' });
+        }
+        document.removeEventListener('keydown', onKeyDown);
         overlay.remove();
+      }
+
+      // Dismiss without saving — keeps the draft so re-running the wizard
+      // resumes where the user left off, but stops it from auto-reopening
+      // on every page load by setting the DONE flag.
+      function dismiss() {
+        saveDraft();
+        close({ done: true, revertPreset: true });
       }
 
       function skipAll() {
         if (!confirm('Skip setup? You can always edit everything in Settings.')) return;
         localStorage.setItem(WIZARD_DONE_KEY, '1');
         localStorage.removeItem(WIZARD_DRAFT_KEY);
-        close(false);
-        overlay.remove();
+        close({ done: false, revertPreset: true });
       }
+
+      function onKeyDown(e) {
+        if (e.key === 'Escape') { e.preventDefault(); dismiss(); }
+      }
+      document.addEventListener('keydown', onKeyDown);
 
       // Renders the current step's body. Each step returns a DOM node + a
       // validator that must return true before the "Next" button activates.
       function renderStep() {
         card.innerHTML = '';
+        const closeBtn = ce('button', { class: 'wizard-close', type: 'button', 'aria-label': 'Close', onclick: dismiss }, ['×']);
+        card.appendChild(closeBtn);
+
         const progress = ce('div', { class: 'wizard-progress' });
-        for (let i = 1; i <= 5; i++) {
-          progress.appendChild(ce('div', { class: 'dot ' + (i < step ? 'done' : i === step ? 'active' : '') }));
+        for (let i = 0; i < totalSteps; i++) {
+          progress.appendChild(ce('div', { class: 'dot ' + (i < stepIdx ? 'done' : i === stepIdx ? 'active' : '') }));
         }
         card.appendChild(progress);
 
-        let body, canAdvance = () => true;
-        if (step === 1) {
-          const { node, isValid } = stepPreset(data);
-          body = node; canAdvance = isValid;
-        } else if (step === 2) {
-          const { node, isValid } = stepTitle(data);
-          body = node; canAdvance = isValid;
-        } else if (step === 3) {
-          const { node, isValid } = stepDateVenue(data);
-          body = node; canAdvance = isValid;
-        } else if (step === 4) {
-          const { node, isValid } = stepHero(data);
-          body = node; canAdvance = isValid;
-        } else {
-          const { node, isValid } = stepHost(data);
-          body = node; canAdvance = isValid;
-        }
-        card.appendChild(body);
+        const { node, isValid } = steps[stepIdx].render(data);
+        const canAdvance = isValid;
+        card.appendChild(node);
 
         const actions = ce('div', { class: 'wizard-actions' });
         const skip = ce('button', { class: 'btn ghost', type: 'button', onclick: skipAll }, ['Skip setup']);
         actions.appendChild(skip);
         const right = ce('div', { class: 'right' });
-        if (step > 1) {
-          right.appendChild(ce('button', { class: 'btn ghost', type: 'button', onclick: () => { step--; saveDraft(); renderStep(); } }, ['Back']));
+        if (stepIdx > 0) {
+          right.appendChild(ce('button', { class: 'btn ghost', type: 'button', onclick: () => { stepIdx--; saveDraft(); renderStep(); } }, ['Back']));
         }
+        const isLast = stepIdx === totalSteps - 1;
         const next = ce('button', {
           class: 'btn', type: 'button',
           onclick: async () => {
             if (!canAdvance()) { toast('Fill the required fields first.', 'error', 3500); return; }
             saveDraft();
-            if (step < 5) { step++; saveDraft(); renderStep(); return; }
+            if (!isLast) { stepIdx++; saveDraft(); renderStep(); return; }
             await finish();
           },
-        }, [step < 5 ? 'Next' : 'Finish']);
+        }, [isLast ? 'Finish' : 'Next']);
         right.appendChild(next);
         actions.appendChild(right);
         card.appendChild(actions);
@@ -2037,10 +2086,9 @@
         const wrap = ce('div');
         wrap.appendChild(ce('h2', { text: 'When & where' }));
         wrap.appendChild(ce('p', { class: 'hint', text: 'We use the date for the countdown and calendar file.' }));
-        const dateInput = ce('input', { type: 'datetime-local', value: data.dateISO ? data.dateISO.slice(0, 16) : '' });
+        const dateInput = ce('input', { type: 'datetime-local', value: isoToLocalDatetime(data.dateISO) });
         dateInput.addEventListener('input', () => {
-          const v = dateInput.value;
-          data.dateISO = v ? new Date(v).toISOString() : '';
+          data.dateISO = localDatetimeToIso(dateInput.value);
         });
         wrap.appendChild(ce('label', { class: 'field' }, ['Date & time', dateInput]));
         const venueInput = ce('input', { type: 'text', placeholder: 'e.g. The Grand Ballroom, Mumbai', value: data.venue || '' });
@@ -2121,7 +2169,7 @@
           await api('/api/config', { method: 'PUT', body: { config: current } });
           await loadBootstrap();
           toast('Setup complete — welcome to your invite!', 'success');
-          close(true);
+          close({ done: true, revertPreset: false });
           renderTabs();
           renderBody();
         } catch (e) {
