@@ -136,22 +136,28 @@ The admin currently hides the highest-leverage actions behind the
 - [ ] **Inline preview-as-guest pane.** Right-side iframe (toggle:
   desktop / tablet / mobile widths). When admin clicks a preset chip
   or saves a field, iframe reloads. Kills the new-tab dance.
-- [ ] **Toast notifications** — replace every `.muted` status line with
-  a corner toast (success/error/info, auto-dismiss). One component,
-  reused everywhere.
-- [ ] **Dirty-state save bar** — track `JSON.stringify(draft) !==
-  JSON.stringify(cfg)`; show "Unsaved changes" with diff count and a
-  `beforeunload` warning.
-- [ ] **Guest list search + bulk select.** Debounced filter (name /
-  group / RSVP / status). Checkbox per row → bulk actions: set RSVP,
-  set group, set inviteStatus, delete, export selected, send to
-  selected.
+- [x] **Toast notifications** — global `toast(message, variant, duration)`
+  with success/error/info variants, auto-dismiss, click-to-close.
+  Replaced inline `.muted` status in: asset upload, add-guest, settings
+  save, JSON restore.
+- [x] **Dirty-state save bar** — Settings tab snapshots `draft` via
+  `JSON.stringify`, compares against baseline, shows "Unsaved changes"
+  in accent color, gates Save button on dirty, warns on `beforeunload`.
+  Listener removed after successful save.
+- [x] **Guest list search + bulk select.** Debounced filter (name /
+  email / phone / group / segment / notes free-text + dropdowns for
+  RSVP / invite status / group). Per-row checkbox + select-all.
+  Sticky bulk bar shows count + actions: Set RSVP, Set invite status,
+  Set group, Delete. New `POST /api/guests/bulk` endpoint backs it.
 - [ ] **Household grouping.** New optional `household_id` column. Two
   guests with same household_id render as a single row in the table
   (expand to show members). Reduces visual noise for couples.
 - [ ] **CSV import** — mirror the JSON restore path, accept CSV with
   flexible column mapping. Stage a preview before commit.
-- [ ] **Mobile guest table** — collapse to card view < 640px.
+- [x] **Mobile guest table** — collapses to card view at `<640px`
+  viewport. Each card shows name/group/phone/email, RSVP + invite
+  selects, and Copy/WhatsApp/Delete actions. Selection checkbox in
+  the card header participates in the same bulk bar.
 
 ## Phase 5 — Communications (2 days)
 

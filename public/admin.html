@@ -172,9 +172,42 @@
       *, *::before, *::after { transition: none !important; animation: none !important; }
       .btn:hover, .stat:hover, .preset-chip:hover { transform: none; }
     }
+
+    /* Guest-list filter toolbar + bulk action bar */
+    .guest-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin: 8px 0 12px; }
+    .guest-toolbar .search { flex:1 1 220px; min-width: 0; }
+    .guest-toolbar select, .guest-toolbar input[type="text"], .guest-toolbar input[type="search"] {
+      height: 36px; padding: 0 10px; border:1px solid var(--border); border-radius: var(--radiusSm);
+      background: var(--surface); color: var(--fg); font: inherit; width: 100%;
+    }
+    .bulk-bar {
+      position: sticky; bottom: 12px; z-index: 10;
+      display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+      background: var(--surface); border:1px solid var(--accent);
+      border-radius: var(--radius); box-shadow: var(--shadow2);
+      padding: 10px 14px; margin-top: 12px;
+    }
+    .bulk-bar .count { font-weight: 600; }
+    .bulk-bar .spacer { flex: 1 1 auto; }
+    .bulk-bar select { height: 32px; border:1px solid var(--border); border-radius: var(--radiusSm); padding: 0 8px; background: var(--surface); font: inherit; }
+    .guest-cards { display: none; flex-direction: column; gap: 10px; }
+    .guest-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 12px 14px; display: grid; gap: 8px;
+    }
+    .guest-card .top { display:flex; justify-content:space-between; align-items:start; gap: 8px; }
+    .guest-card .name { font-weight: 600; }
+    .guest-card .sub { color: var(--fgMuted); font-size: .88em; }
+    .guest-card .fields { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .guest-card .actions { display:flex; flex-wrap:wrap; gap: 6px; }
+    .guest-card .chk { display:flex; gap:6px; align-items:center; font-size:.85em; color: var(--fgMuted); }
+
     @media (max-width: 640px) {
       th.mobile-hide, td.mobile-hide { display:none; }
       main { padding: 14px; }
+      .guest-table { display: none; }
+      .guest-cards { display: flex; }
+      .bulk-bar { position: sticky; bottom: 0; border-radius: var(--radius) var(--radius) 0 0; }
     }
   </style>
 </head>
@@ -521,59 +554,270 @@
         } catch (e) { /* ignore */ }
       }
 
+      // Filter state lives inside the closure so it survives re-renders.
+      const filters = { q: '', rsvp: '', inviteStatus: '', group: '' };
+      // Selected IDs are a Set so toggling is O(1); cleared on filter change
+      // only when a row drops out of view (see visibleGuests).
+      const selection = new Set();
+
+      function matchesFilters(g) {
+        if (filters.rsvp && g.rsvp !== filters.rsvp) return false;
+        if (filters.inviteStatus && g.inviteStatus !== filters.inviteStatus) return false;
+        if (filters.group && (g.guestGroup || '') !== filters.group) return false;
+        if (filters.q) {
+          const q = filters.q.toLowerCase();
+          const hay = [g.guestName, g.guestGroup, g.mobileNumber, g.emailAddress, g.segment, g.notes]
+            .filter(Boolean).join(' ').toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      }
+
       async function refreshGuests() {
         try {
           const data = await api('/api/guests');
           STATE.guests = data.rows || [];
           tableHost.innerHTML = '';
-          if (!STATE.guests.length) { tableHost.appendChild(ce('p', { class: 'muted', text: 'No guests yet.' })); return; }
-          const table = ce('table');
-          const thead = ce('thead');
-          thead.appendChild(ce('tr', {}, [
-            ce('th', { text: '#' }),
-            ce('th', { text: 'Name' }),
-            ce('th', { class: 'mobile-hide', text: 'Group' }),
-            ce('th', { class: 'mobile-hide', text: 'Phone' }),
-            ce('th', { text: 'Party' }),
-            ce('th', { text: 'RSVP' }),
-            ce('th', { text: 'Invite' }),
-            ce('th', { text: '' }),
-          ]));
-          table.appendChild(thead);
-          const tbody = ce('tbody');
-          for (const g of STATE.guests) {
-            const link = `${location.origin}/i/${g.inviteToken}`;
-            const rsvpSel = ce('select', {}, ['Pending','Attending','Maybe','Declined'].map(s => ce('option', { value: s, selected: g.rsvp === s ? 'selected' : undefined, text: s })));
-            rsvpSel.addEventListener('change', async () => {
-              await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'rsvp', value: rsvpSel.value } });
-              refreshStats();
-            });
-            const invSel = ce('select', {}, ['Not Sent','Sent','Delivered','Not Invited'].map(s => ce('option', { value: s, selected: g.inviteStatus === s ? 'selected' : undefined, text: s })));
-            invSel.addEventListener('change', async () => {
-              await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'inviteStatus', value: invSel.value } });
-              refreshStats();
-            });
-            const copyBtn = ce('button', { class: 'btn small ghost', onclick: () => navigator.clipboard.writeText(link).then(() => copyBtn.textContent = 'Copied') }, ['Copy link']);
-            const waBtn = g.mobileNumber ? ce('a', { class: 'btn small ghost', href: waUrl(g, link), target: '_blank', rel: 'noopener', text: 'WhatsApp' }) : null;
-            const delBtn = ce('button', { class: 'btn small danger', onclick: async () => {
-              if (!confirm(`Delete ${g.guestName}?`)) return;
-              await api(`/api/guests/${g.id}`, { method: 'DELETE' });
-              refreshGuests(); refreshStats();
-            }}, ['Delete']);
-            tbody.appendChild(ce('tr', {}, [
-              ce('td', { text: String(g.id) }),
-              ce('td', {}, [g.guestName, ce('br'), ce('span', { class: 'muted', style:'font-size:.85em', text: g.emailAddress || '' })]),
-              ce('td', { class: 'mobile-hide', text: g.guestGroup || '' }),
-              ce('td', { class: 'mobile-hide', text: g.mobileNumber || '' }),
-              ce('td', { text: `${g.partySize || 1}${g.confirmedPartySize != null ? ` → ${g.confirmedPartySize}` : ''}` }),
-              ce('td', {}, [rsvpSel]),
-              ce('td', {}, [invSel]),
-              ce('td', {}, [ce('div', { class: 'row' }, [copyBtn, waBtn, delBtn].filter(Boolean))]),
-            ]));
+
+          // ── Filter toolbar ─────────────────────────────────────────────
+          const toolbar = ce('div', { class: 'guest-toolbar' });
+          const search = ce('input', { type: 'search', class: 'search', placeholder: 'Search name, email, phone, group…', value: filters.q });
+          let searchTimer = null;
+          search.addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => { filters.q = search.value.trim(); renderRows(); }, 120);
+          });
+          const rsvpFilter = ce('select', {}, [
+            ce('option', { value: '', text: 'All RSVPs' }),
+            ...['Pending','Attending','Maybe','Declined'].map(s => ce('option', { value: s, selected: filters.rsvp === s ? 'selected' : undefined, text: s })),
+          ]);
+          rsvpFilter.addEventListener('change', () => { filters.rsvp = rsvpFilter.value; renderRows(); });
+          const invFilter = ce('select', {}, [
+            ce('option', { value: '', text: 'All invite statuses' }),
+            ...['Not Sent','Sent','Delivered','Not Invited'].map(s => ce('option', { value: s, selected: filters.inviteStatus === s ? 'selected' : undefined, text: s })),
+          ]);
+          invFilter.addEventListener('change', () => { filters.inviteStatus = invFilter.value; renderRows(); });
+          const uniqueGroups = Array.from(new Set(STATE.guests.map(g => g.guestGroup).filter(Boolean))).sort();
+          const groupFilter = ce('select', {}, [
+            ce('option', { value: '', text: 'All groups' }),
+            ...uniqueGroups.map(g => ce('option', { value: g, selected: filters.group === g ? 'selected' : undefined, text: g })),
+          ]);
+          groupFilter.addEventListener('change', () => { filters.group = groupFilter.value; renderRows(); });
+          toolbar.appendChild(search);
+          toolbar.appendChild(rsvpFilter);
+          toolbar.appendChild(invFilter);
+          if (uniqueGroups.length) toolbar.appendChild(groupFilter);
+          tableHost.appendChild(toolbar);
+
+          if (!STATE.guests.length) {
+            tableHost.appendChild(ce('p', { class: 'muted', text: 'No guests yet.' }));
+            return;
           }
-          table.appendChild(tbody);
-          tableHost.appendChild(table);
-        } catch (e) { tableHost.appendChild(ce('p', { class: 'err', text: e.message })); }
+
+          // rowHost is re-rendered on filter changes without rebuilding the toolbar.
+          const rowHost = ce('div');
+          tableHost.appendChild(rowHost);
+
+          function renderRows() {
+            const visible = STATE.guests.filter(matchesFilters);
+            // Prune selection of rows no longer visible.
+            for (const id of Array.from(selection)) {
+              if (!visible.some(g => g.id === id)) selection.delete(id);
+            }
+            rowHost.innerHTML = '';
+
+            if (!visible.length) {
+              rowHost.appendChild(ce('p', { class: 'muted', text: 'No guests match these filters.' }));
+              renderBulkBar(visible);
+              return;
+            }
+
+            // Desktop table (hidden <640px via .guest-table CSS)
+            const table = ce('table', { class: 'guest-table' });
+            const selectAllDesktop = ce('input', { type: 'checkbox' });
+            selectAllDesktop.checked = visible.every(g => selection.has(g.id));
+            selectAllDesktop.indeterminate = !selectAllDesktop.checked && visible.some(g => selection.has(g.id));
+            selectAllDesktop.addEventListener('change', () => {
+              if (selectAllDesktop.checked) visible.forEach(g => selection.add(g.id));
+              else visible.forEach(g => selection.delete(g.id));
+              renderRows();
+            });
+            const thead = ce('thead');
+            thead.appendChild(ce('tr', {}, [
+              ce('th', {}, [selectAllDesktop]),
+              ce('th', { text: '#' }),
+              ce('th', { text: 'Name' }),
+              ce('th', { class: 'mobile-hide', text: 'Group' }),
+              ce('th', { class: 'mobile-hide', text: 'Phone' }),
+              ce('th', { text: 'Party' }),
+              ce('th', { text: 'RSVP' }),
+              ce('th', { text: 'Invite' }),
+              ce('th', { text: '' }),
+            ]));
+            table.appendChild(thead);
+            const tbody = ce('tbody');
+            for (const g of visible) {
+              const link = `${location.origin}/i/${g.inviteToken}`;
+              const chk = ce('input', { type: 'checkbox' });
+              chk.checked = selection.has(g.id);
+              chk.addEventListener('change', () => {
+                if (chk.checked) selection.add(g.id); else selection.delete(g.id);
+                renderBulkBar(visible);
+                selectAllDesktop.checked = visible.every(x => selection.has(x.id));
+                selectAllDesktop.indeterminate = !selectAllDesktop.checked && visible.some(x => selection.has(x.id));
+              });
+              const rsvpSel = ce('select', {}, ['Pending','Attending','Maybe','Declined'].map(s => ce('option', { value: s, selected: g.rsvp === s ? 'selected' : undefined, text: s })));
+              rsvpSel.addEventListener('change', async () => {
+                try {
+                  await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'rsvp', value: rsvpSel.value } });
+                  g.rsvp = rsvpSel.value;
+                  refreshStats();
+                } catch (e) { toast(e.message, 'error'); }
+              });
+              const invSel = ce('select', {}, ['Not Sent','Sent','Delivered','Not Invited'].map(s => ce('option', { value: s, selected: g.inviteStatus === s ? 'selected' : undefined, text: s })));
+              invSel.addEventListener('change', async () => {
+                try {
+                  await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'inviteStatus', value: invSel.value } });
+                  g.inviteStatus = invSel.value;
+                  refreshStats();
+                } catch (e) { toast(e.message, 'error'); }
+              });
+              const copyBtn = ce('button', { class: 'btn small ghost', onclick: () => navigator.clipboard.writeText(link).then(() => { copyBtn.textContent = 'Copied'; toast('Invite link copied.', 'success', 1600); }) }, ['Copy link']);
+              const waBtn = g.mobileNumber ? ce('a', { class: 'btn small ghost', href: waUrl(g, link), target: '_blank', rel: 'noopener', text: 'WhatsApp' }) : null;
+              const delBtn = ce('button', { class: 'btn small danger', onclick: async () => {
+                if (!confirm(`Delete ${g.guestName}?`)) return;
+                try {
+                  await api(`/api/guests/${g.id}`, { method: 'DELETE' });
+                  refreshGuests(); refreshStats();
+                } catch (e) { toast(e.message, 'error'); }
+              }}, ['Delete']);
+              tbody.appendChild(ce('tr', {}, [
+                ce('td', {}, [chk]),
+                ce('td', { text: String(g.id) }),
+                ce('td', {}, [g.guestName, ce('br'), ce('span', { class: 'muted', style:'font-size:.85em', text: g.emailAddress || '' })]),
+                ce('td', { class: 'mobile-hide', text: g.guestGroup || '' }),
+                ce('td', { class: 'mobile-hide', text: g.mobileNumber || '' }),
+                ce('td', { text: `${g.partySize || 1}${g.confirmedPartySize != null ? ` → ${g.confirmedPartySize}` : ''}` }),
+                ce('td', {}, [rsvpSel]),
+                ce('td', {}, [invSel]),
+                ce('td', {}, [ce('div', { class: 'row' }, [copyBtn, waBtn, delBtn].filter(Boolean))]),
+              ]));
+            }
+            table.appendChild(tbody);
+            rowHost.appendChild(table);
+
+            // Mobile card list (shown <640px via .guest-cards CSS)
+            const cards = ce('div', { class: 'guest-cards' });
+            for (const g of visible) {
+              const link = `${location.origin}/i/${g.inviteToken}`;
+              const chk = ce('input', { type: 'checkbox' });
+              chk.checked = selection.has(g.id);
+              chk.addEventListener('change', () => {
+                if (chk.checked) selection.add(g.id); else selection.delete(g.id);
+                renderBulkBar(visible);
+              });
+              const rsvpSel = ce('select', {}, ['Pending','Attending','Maybe','Declined'].map(s => ce('option', { value: s, selected: g.rsvp === s ? 'selected' : undefined, text: s })));
+              rsvpSel.addEventListener('change', async () => {
+                try { await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'rsvp', value: rsvpSel.value } }); g.rsvp = rsvpSel.value; refreshStats(); }
+                catch (e) { toast(e.message, 'error'); }
+              });
+              const invSel = ce('select', {}, ['Not Sent','Sent','Delivered','Not Invited'].map(s => ce('option', { value: s, selected: g.inviteStatus === s ? 'selected' : undefined, text: s })));
+              invSel.addEventListener('change', async () => {
+                try { await api(`/api/guests/${g.id}`, { method: 'PUT', body: { field: 'inviteStatus', value: invSel.value } }); g.inviteStatus = invSel.value; refreshStats(); }
+                catch (e) { toast(e.message, 'error'); }
+              });
+              const copyBtn = ce('button', { class: 'btn small ghost', onclick: () => navigator.clipboard.writeText(link).then(() => toast('Invite link copied.', 'success', 1600)) }, ['Copy link']);
+              const waBtn = g.mobileNumber ? ce('a', { class: 'btn small ghost', href: waUrl(g, link), target: '_blank', rel: 'noopener', text: 'WhatsApp' }) : null;
+              const delBtn = ce('button', { class: 'btn small danger', onclick: async () => {
+                if (!confirm(`Delete ${g.guestName}?`)) return;
+                try { await api(`/api/guests/${g.id}`, { method: 'DELETE' }); refreshGuests(); refreshStats(); }
+                catch (e) { toast(e.message, 'error'); }
+              }}, ['Delete']);
+              const card = ce('div', { class: 'guest-card' }, [
+                ce('div', { class: 'top' }, [
+                  ce('div', {}, [
+                    ce('div', { class: 'name', text: g.guestName }),
+                    ce('div', { class: 'sub', text: [g.guestGroup, g.mobileNumber].filter(Boolean).join(' · ') }),
+                    g.emailAddress ? ce('div', { class: 'sub', text: g.emailAddress }) : null,
+                  ].filter(Boolean)),
+                  ce('label', { class: 'chk' }, [chk, 'select']),
+                ]),
+                ce('div', { class: 'fields' }, [
+                  ce('label', { class: 'field' }, [ce('span', { class: 'muted', style: 'font-size:.8em', text: 'RSVP' }), rsvpSel]),
+                  ce('label', { class: 'field' }, [ce('span', { class: 'muted', style: 'font-size:.8em', text: 'Invite' }), invSel]),
+                ]),
+                ce('div', { class: 'actions' }, [copyBtn, waBtn, delBtn].filter(Boolean)),
+              ]);
+              cards.appendChild(card);
+            }
+            rowHost.appendChild(cards);
+
+            renderBulkBar(visible);
+          }
+
+          let bulkBarEl = null;
+          function renderBulkBar(visible) {
+            if (bulkBarEl) { bulkBarEl.remove(); bulkBarEl = null; }
+            if (!selection.size) return;
+            bulkBarEl = ce('div', { class: 'bulk-bar' });
+            bulkBarEl.appendChild(ce('span', { class: 'count', text: `${selection.size} selected` }));
+            const rsvpAction = ce('select', {}, [
+              ce('option', { value: '', text: 'Set RSVP…' }),
+              ...['Pending','Attending','Maybe','Declined'].map(s => ce('option', { value: s, text: s })),
+            ]);
+            rsvpAction.addEventListener('change', async () => {
+              if (!rsvpAction.value) return;
+              await bulkApply('setRsvp', rsvpAction.value, `RSVP set to ${rsvpAction.value}`);
+            });
+            const invAction = ce('select', {}, [
+              ce('option', { value: '', text: 'Set invite status…' }),
+              ...['Not Sent','Sent','Delivered','Not Invited'].map(s => ce('option', { value: s, text: s })),
+            ]);
+            invAction.addEventListener('change', async () => {
+              if (!invAction.value) return;
+              await bulkApply('setInviteStatus', invAction.value, `Invite status set to ${invAction.value}`);
+            });
+            const groupAction = ce('select', {}, [
+              ce('option', { value: '__none__', text: 'Set group…' }),
+              ce('option', { value: '', text: '(clear)' }),
+              ...(STATE.config.groups || []).map(g => ce('option', { value: g, text: g })),
+            ]);
+            groupAction.addEventListener('change', async () => {
+              if (groupAction.value === '__none__') return;
+              const label = groupAction.value || '(cleared)';
+              await bulkApply('setGroup', groupAction.value, `Group set to ${label}`);
+            });
+            const delBtn = ce('button', { class: 'btn small danger', onclick: async () => {
+              if (!confirm(`Delete ${selection.size} guest${selection.size === 1 ? '' : 's'}?`)) return;
+              await bulkApply('delete', undefined, `${selection.size} guests deleted`);
+            }}, ['Delete']);
+            const clearBtn = ce('button', { class: 'btn small ghost', onclick: () => { selection.clear(); renderRows(); } }, ['Clear']);
+            bulkBarEl.appendChild(rsvpAction);
+            bulkBarEl.appendChild(invAction);
+            bulkBarEl.appendChild(groupAction);
+            bulkBarEl.appendChild(ce('span', { class: 'spacer' }));
+            bulkBarEl.appendChild(clearBtn);
+            bulkBarEl.appendChild(delBtn);
+            listCard.appendChild(bulkBarEl);
+          }
+
+          async function bulkApply(action, value, successMsg) {
+            const ids = Array.from(selection);
+            try {
+              await api('/api/guests/bulk', { method: 'POST', body: { ids, action, ...(value !== undefined ? { value } : {}) } });
+              selection.clear();
+              toast(successMsg, 'success');
+              refreshGuests();
+              refreshStats();
+            } catch (e) {
+              toast('Bulk update failed: ' + e.message, 'error', 6000);
+            }
+          }
+
+          renderRows();
+        } catch (e) {
+          tableHost.appendChild(ce('p', { class: 'err', text: e.message }));
+        }
       }
 
       refreshStats();

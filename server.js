@@ -1171,6 +1171,55 @@ app.delete('/api/guests/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Bulk operations on a list of guest ids. Accepts one of:
+//   { ids:[...], action:'setRsvp',          value:'Attending' }
+//   { ids:[...], action:'setInviteStatus',  value:'Sent'      }
+//   { ids:[...], action:'setGroup',         value:'Family'    }  // '' clears
+//   { ids:[...], action:'delete' }
+app.post('/api/guests/bulk', requireAuth, async (req, res) => {
+  const { ids, action, value } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ ok: false, error: 'ids required' });
+  const cleanIds = ids.map(n => Number(n)).filter(Number.isInteger);
+  if (!cleanIds.length) return res.status(400).json({ ok: false, error: 'no valid ids' });
+  try {
+    if (action === 'delete') {
+      const inSqlite = cleanIds.map(() => '?').join(',');
+      const inPg = cleanIds.map((_, i) => sqlParam(i + 1)).join(',');
+      await dbRun(
+        `DELETE FROM guests WHERE id IN (${inSqlite})`,
+        `DELETE FROM guests WHERE id IN (${inPg})`,
+        cleanIds
+      );
+      return res.json({ ok: true, updated: cleanIds.length });
+    }
+    const col = action === 'setRsvp' ? 'rsvp'
+      : action === 'setInviteStatus' ? 'invite_status'
+      : action === 'setGroup' ? 'guest_group'
+      : null;
+    if (!col) return res.status(400).json({ ok: false, error: 'unknown action' });
+    const val = String(value ?? '');
+    const touchSentDate = col === 'invite_status' && val && val !== 'Not Sent';
+    // Assemble params then build placeholders positionally — keeps Postgres `$n`
+    // in lockstep with the params array without ad-hoc index math.
+    const params = [val];
+    if (touchSentDate) params.push(new Date().toISOString());
+    const setClause = touchSentDate
+      ? `${col}=${sqlParam(1)}, invite_sent_date=${sqlParam(2)}`
+      : `${col}=${sqlParam(1)}`;
+    const idParamsPg = cleanIds.map((_, i) => sqlParam(params.length + 1 + i)).join(',');
+    const idParamsSqlite = cleanIds.map(() => '?').join(',');
+    params.push(...cleanIds);
+    await dbRun(
+      `UPDATE guests SET ${setClause.replace(/\$\d+/g, '?')} WHERE id IN (${idParamsSqlite})`,
+      `UPDATE guests SET ${setClause} WHERE id IN (${idParamsPg})`,
+      params
+    );
+    res.json({ ok: true, updated: cleanIds.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Stats
 app.get('/api/stats', requireAuth, async (_req, res) => {
   try {
