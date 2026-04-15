@@ -2425,11 +2425,11 @@
 
       function stepHost(data) {
         const wrap = ce('div');
-        wrap.appendChild(ce('h2', { text: 'Who is hosting?' }));
-        wrap.appendChild(ce('p', { class: 'hint', text: 'Optional — add a name so guests can reach out. Add more in Settings.' }));
+        wrap.appendChild(ce('h2', { text: 'Add a hosting side' }));
+        wrap.appendChild(ce('p', { class: 'hint', text: 'Optional. Appears as a chip in the "Hosted By" strip (separate from the tagline you set earlier). Add more sides in Settings.' }));
         const nameInput = ce('input', { type: 'text', placeholder: 'e.g. The Sharma Family', value: data.hostName || '' });
         nameInput.addEventListener('input', () => { data.hostName = nameInput.value.trim(); });
-        wrap.appendChild(ce('label', { class: 'field' }, ['Host name', nameInput]));
+        wrap.appendChild(ce('label', { class: 'field' }, ['Side name', nameInput]));
         const roleInput = ce('input', { type: 'text', placeholder: 'e.g. Parents of the bride', value: data.hostRole || '' });
         roleInput.addEventListener('input', () => { data.hostRole = roleInput.value.trim(); });
         wrap.appendChild(ce('label', { class: 'field' }, ['Relationship / role', roleInput]));
@@ -2493,9 +2493,11 @@
           }
           if (data.hostName) {
             const slug = (data.hostName || 'host').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'host';
-            // Only add if a host with the same slug doesn't already exist.
+            // Use the same shape the Settings editor uses:
+            // {id, label, slug, role}. Skip if a row with this slug already
+            // exists so re-running the wizard doesn't duplicate.
             if (!current.hosts.some(h => h.slug === slug)) {
-              current.hosts.push({ slug, name: data.hostName, role: data.hostRole || '' });
+              current.hosts.push({ id: 'h' + Date.now(), label: data.hostName, slug, role: data.hostRole || '' });
             }
           }
           await api('/api/config', { method: 'PUT', body: { config: current } });

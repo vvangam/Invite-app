@@ -541,7 +541,6 @@
       };
 
       [
-        row('Hosted by', event.hostedBy),
         row('Date', [event.dateLabel, event.timeLabel].filter(Boolean).join(' \u00b7 ')),
         row('Venue', [event.venue, event.address, event.city].filter(Boolean).join(', ')),
         row('Dress Code', event.dressCode),
@@ -685,10 +684,22 @@
 
     function renderHosts(hosts, copy) {
       if (!hosts || !hosts.length) return null;
+      // Accept any of the historical shapes — Settings uses {id,label,slug}
+      // while the wizard used to save {slug,name}. Skip rows with no human
+      // label; rendering a raw slug looks broken.
+      const labelFor = (h) => (h && (h.label || h.name)) || '';
+      const visible = hosts.filter(h => labelFor(h).trim());
+      if (!visible.length) return null;
       const card = ce('section', { class: 'card reveal' });
       card.appendChild(ce('h2', { text: copy.hostsHeader || 'Hosted By' }));
       const strip = ce('div', { class: 'hosts' });
-      for (const h of hosts) strip.appendChild(ce('span', { class: 'host', text: h.label || h.id }));
+      for (const h of visible) {
+        const chip = ce('span', { class: 'host' }, [
+          ce('span', { class: 'host-label', text: labelFor(h) }),
+        ]);
+        if (h.role) chip.appendChild(ce('span', { class: 'host-role muted', text: ' \u00b7 ' + h.role }));
+        strip.appendChild(chip);
+      }
       card.appendChild(strip);
       return card;
     }
