@@ -1036,20 +1036,21 @@ function escapeHtml(s) {
 }
 
 // ── Start ───────────────────────────────────────────────────────────────────
-async function start() {
-  await initDb();
-  await backfillInviteTokens();
-  app.listen(PORT, () => {
-    console.log(`\nInvite App running:`);
-    console.log(`  Admin     →  http://localhost:${PORT}/admin`);
-    console.log(`  Invite    →  http://localhost:${PORT}/invite.html`);
+function start() {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\nInvite App listening on :${PORT}`);
     console.log(`  Database  →  ${pg ? 'Postgres' : 'SQLite'}`);
     console.log(`  Uploads   →  ${UPLOAD_DIR}\n`);
   });
+
+  initDb()
+    .then(() => backfillInviteTokens())
+    .then(() => console.log('DB ready'))
+    .catch((err) => console.error('DB init failed:', err));
 }
 
 if (require.main === module) {
-  start().catch((err) => { console.error('Failed to start:', err); process.exit(1); });
+  start();
 }
 
 module.exports = { app, start, CONFIG };
