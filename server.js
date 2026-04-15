@@ -290,6 +290,44 @@ setInterval(() => {
   for (const [k, v] of rlBuckets) if (now - v.windowStart > 300_000) rlBuckets.delete(k);
 }, 120_000).unref();
 
+// PIN lockout: after PIN_LOCKOUT_THRESHOLD consecutive bad PINs from one IP,
+// reject for PIN_LOCKOUT_MS regardless of bucket. Cleared on success.
+const PIN_LOCKOUT_THRESHOLD = 5;
+const PIN_LOCKOUT_MS = 60 * 60 * 1000;
+const pinFailures = new Map(); // ipKey → { count, lockedUntil }
+
+function pinClientKey(req) {
+  return req.ip || req.headers['x-forwarded-for'] || 'unknown';
+}
+
+function pinLockState(req) {
+  const rec = pinFailures.get(pinClientKey(req));
+  if (!rec) return { locked: false, retryAfterMs: 0 };
+  if (rec.lockedUntil && rec.lockedUntil > Date.now()) {
+    return { locked: true, retryAfterMs: rec.lockedUntil - Date.now() };
+  }
+  return { locked: false, retryAfterMs: 0 };
+}
+
+function recordPinFailure(req) {
+  const key = pinClientKey(req);
+  const rec = pinFailures.get(key) || { count: 0, lockedUntil: 0 };
+  rec.count += 1;
+  if (rec.count >= PIN_LOCKOUT_THRESHOLD) rec.lockedUntil = Date.now() + PIN_LOCKOUT_MS;
+  pinFailures.set(key, rec);
+}
+
+function clearPinFailures(req) {
+  pinFailures.delete(pinClientKey(req));
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pinFailures) {
+    if (v.lockedUntil && v.lockedUntil < now) pinFailures.delete(k);
+  }
+}, 5 * 60_000).unref();
+
 // ── App setup ───────────────────────────────────────────────────────────────
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '2mb' }));
@@ -316,8 +354,9 @@ const upload = multer({
     },
   }),
   limits: { fileSize: CONFIG.uploads.maxBytes },
-  fileFilter: (_req, file, cb) => {
-    if (CONFIG.uploads.allowedMime.includes(file.mimetype)) return cb(null, true);
+  fileFilter: (req, file, cb) => {
+    const allowed = req._allowedMime || CONFIG.uploads.allowedMime;
+    if (allowed.includes(file.mimetype)) return cb(null, true);
     cb(new Error(`Unsupported file type: ${file.mimetype}`));
   },
 });
@@ -498,6 +537,32 @@ function resolveTheme(cfg) {
   };
 }
 
+// Accept date-only (YYYY-MM-DD), date+time (YYYY-MM-DDTHH:MM[:SS]),
+// or full ISO 8601 with Z / offset. Empty string is allowed (means "unset").
+const ISO_DATE_RE = /^(?:\d{4}-\d{2}-\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+function isValidIsoDate(value) {
+  if (value == null || value === '') return true;
+  if (typeof value !== 'string') return false;
+  if (!ISO_DATE_RE.test(value)) return false;
+  const t = Date.parse(value);
+  return Number.isFinite(t);
+}
+
+// Resolve the deadline timestamp the RSVP lock is measured against:
+// rsvpDeadlineISO wins, then dateISO. Returns null if neither parses.
+function resolveDeadlineMs(event) {
+  const candidate = (event && (event.rsvpDeadlineISO || event.dateISO)) || '';
+  if (!candidate) return null;
+  const t = Date.parse(candidate);
+  return Number.isFinite(t) ? t : null;
+}
+
+function isRsvpClosed(cfg) {
+  if (!cfg || !cfg.rsvp || !cfg.rsvp.lockAfterDeadline) return false;
+  const deadline = resolveDeadlineMs(cfg.event || {});
+  return deadline != null && Date.now() > deadline;
+}
+
 function assetToPublic(row) {
   const variants = safeJson(row.variants_json, {});
   const variantNames = Object.keys(variants);
@@ -624,7 +689,17 @@ async function loadAssetsByRole() {
 
 // Public RSVP (rate-limited). Accepts new or existing invite token.
 app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req, res) => {
-  if (!CONFIG.features.publicRsvp) return res.status(403).json({ ok: false, error: CONFIG.copy.rsvpClosed });
+  let cfg;
+  try { cfg = await mergedConfig(); }
+  catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+
+  const closedCopy = (cfg.copy && cfg.copy.rsvpClosed) || CONFIG.copy.rsvpClosed;
+  if (!cfg.features || !cfg.features.publicRsvp) {
+    return res.status(403).json({ ok: false, error: closedCopy });
+  }
+  if (isRsvpClosed(cfg)) {
+    return res.status(403).json({ ok: false, error: closedCopy });
+  }
 
   const { token = '', name, phone = '', email = '', partySize = 1, segment = '',
           rsvp = 'Attending', notes = '', dietary = '', eventSelections = [] } = req.body || {};
@@ -635,6 +710,7 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
     const trimmedToken = String(token || '').trim();
     const normalized = normalizeEventSelections(eventSelections);
     const nextPartySize = String(rsvp) === 'Declined' ? 0 : Math.max(0, Number(partySize) || 0);
+    const allowSelfEdit = cfg.rsvp && cfg.rsvp.allowSelfEdit !== false;
 
     if (trimmedToken) {
       const guest = await dbGet(
@@ -643,6 +719,9 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
         [trimmedToken]
       );
       if (guest) {
+        if (!allowSelfEdit && guest.rsvp && guest.rsvp !== 'Pending') {
+          return res.status(403).json({ ok: false, error: 'Your response is locked. Contact the host to make changes.' });
+        }
         await dbRun(
           `UPDATE guests SET guest_name=?, mobile_number=?, email_address=?, segment=?, rsvp=?, confirmed_party_size=?, notes=?, dietary=?, event_selections=?, invite_status='Sent' WHERE invite_token=?`,
           `UPDATE guests SET guest_name=$1, mobile_number=$2, email_address=$3, segment=$4, rsvp=$5, confirmed_party_size=$6, notes=$7, dietary=$8, event_selections=$9, invite_status='Sent' WHERE invite_token=$10`,
@@ -681,55 +760,27 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
   }
 });
 
-// Save-the-date OG pages (only if feature enabled). Any host slug works.
-app.get('/std/:slug', async (req, res) => {
-  if (!CONFIG.features.saveTheDate) return res.status(404).send('Not found');
-  const slug = String(req.params.slug || '').toLowerCase();
-  const assetsByRole = await loadAssetsByRole();
-  const hostAssets = assetsByRole.byHost[slug] || [];
-  const defaultAsset = (assetsByRole.byRole['std-default'] || [])[0];
-  const asset = hostAssets[0] || defaultAsset;
-  if (!asset) return res.redirect('/invite.html');
-
-  const origin = CONFIG.publicUrl || `${req.protocol}://${req.get('host')}`;
-  const title = CONFIG.event.title || CONFIG.copy.appName;
-  const description = CONFIG.event.dateLabel || '';
-  const ogUrl = `${origin}${asset.ogUrl}`;
-  const fullUrl = `${origin}${asset.url}`;
-  res.set('Cache-Control', 'public, max-age=86400');
-  res.type('html').send(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${escapeHtml(title)}</title>
-<meta property="og:title" content="${escapeHtml(title)}"/>
-<meta property="og:description" content="${escapeHtml(description)}"/>
-<meta property="og:image" content="${escapeHtml(ogUrl)}"/>
-<meta property="og:image:type" content="image/jpeg"/>
-<meta property="og:type" content="website"/>
-<meta property="og:url" content="${escapeHtml(`${origin}/std/${slug}`)}"/>
-<meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:title" content="${escapeHtml(title)}"/>
-<meta name="twitter:description" content="${escapeHtml(description)}"/>
-<meta name="twitter:image" content="${escapeHtml(ogUrl)}"/>
-<style>
-*,*::before,*::after{box-sizing:border-box}
-body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;background:${escapeHtml(CONFIG.theme.colorBg)};font-family:${CONFIG.theme.fontBody}}
-img,video{max-width:min(100vw,520px);max-height:92dvh;border-radius:${escapeHtml(CONFIG.theme.radius)};box-shadow:0 24px 60px rgba(0,0,0,.12)}
-</style>
-</head>
-<body>
-<img src="${escapeHtml(fullUrl)}" alt="${escapeHtml(title)}"/>
-</body>
-</html>`);
-});
-
 // ── Routes: admin ───────────────────────────────────────────────────────────
 app.post('/api/validate-pin', rateLimit(CONFIG.rateLimits.validatePinPerMin), async (req, res) => {
   const { pin } = req.body || {};
   if (!CONFIG.pin) return res.json({ ok: true, token: 'no-pin-needed' });
-  if (String(pin) !== String(CONFIG.pin)) return res.status(401).json({ ok: false, error: 'Wrong PIN' });
+
+  const lock = pinLockState(req);
+  if (lock.locked) {
+    const minutes = Math.ceil(lock.retryAfterMs / 60_000);
+    res.setHeader('Retry-After', String(Math.ceil(lock.retryAfterMs / 1000)));
+    return res.status(429).json({
+      ok: false,
+      error: `Too many failed attempts. Locked for ${minutes} more minute${minutes === 1 ? '' : 's'}.`,
+    });
+  }
+
+  if (String(pin) !== String(CONFIG.pin)) {
+    recordPinFailure(req);
+    return res.status(401).json({ ok: false, error: 'Wrong PIN' });
+  }
+
+  clearPinFailures(req);
   const token = crypto.randomBytes(32).toString('hex');
   await dbRun(
     `INSERT INTO sessions (token) VALUES (?)`,
@@ -780,6 +831,15 @@ app.put('/api/config', requireAuth, async (req, res) => {
     const patch = (req.body && req.body.config) || req.body || {};
     if (!isPlainObject(patch)) return res.status(400).json({ ok: false, error: 'config must be an object' });
 
+    if (isPlainObject(patch.event)) {
+      if (!isValidIsoDate(patch.event.dateISO)) {
+        return res.status(400).json({ ok: false, error: 'event.dateISO must be ISO 8601 (e.g. 2026-09-12 or 2026-09-12T18:00:00Z)' });
+      }
+      if (!isValidIsoDate(patch.event.rsvpDeadlineISO)) {
+        return res.status(400).json({ ok: false, error: 'event.rsvpDeadlineISO must be ISO 8601 (e.g. 2026-08-15)' });
+      }
+    }
+
     const accepted = [];
     for (const [key, value] of Object.entries(patch)) {
       if (!CONFIG_KEY_ALLOWLIST.has(key)) continue;
@@ -807,8 +867,21 @@ app.get('/api/assets', requireAuth, async (_req, res) => {
 });
 
 // Assets: upload
-app.post('/api/assets', requireAuth, (req, res) => {
+app.post('/api/assets', requireAuth, async (req, res) => {
   if (!CONFIG.features.assetUpload) return res.status(403).json({ ok: false, error: 'Asset upload disabled' });
+  // Honour the runtime videoUpload flag so admins can disable video without
+  // restarting. Static `CONFIG.uploads.allowedMime` stays the upper bound.
+  let videoAllowed = CONFIG.features.videoUpload !== false;
+  try {
+    const cfg = await mergedConfig();
+    if (cfg && cfg.features && Object.prototype.hasOwnProperty.call(cfg.features, 'videoUpload')) {
+      videoAllowed = cfg.features.videoUpload !== false;
+    }
+  } catch { /* fall back to static CONFIG */ }
+  req._allowedMime = videoAllowed
+    ? CONFIG.uploads.allowedMime
+    : CONFIG.uploads.allowedMime.filter((m) => !m.startsWith('video/'));
+
   upload.single('file')(req, res, async (err) => {
     if (err) return res.status(400).json({ ok: false, error: err.message });
     if (!req.file) return res.status(400).json({ ok: false, error: 'No file' });
@@ -846,7 +919,7 @@ app.post('/api/assets', requireAuth, (req, res) => {
       }
 
       // Enforce singleton roles (one 'hero', etc.) by replacing.
-      if (role === 'hero' || role === 'background' || role === 'std-default') {
+      if (role === 'hero' || role === 'background') {
         await dbRun(
           `DELETE FROM assets WHERE role=?`,
           `DELETE FROM assets WHERE role=$1`,
@@ -938,7 +1011,7 @@ app.post('/api/guests', requireAuth, async (req, res) => {
 });
 
 app.get('/api/guests', requireAuth, async (req, res) => {
-  const { search, guestGroup, segment, inviteStatus, stdStatus, rsvp, followUpOnly, source, addedByName } = req.query;
+  const { search, guestGroup, segment, inviteStatus, rsvp, followUpOnly, source, addedByName } = req.query;
   let q = 'SELECT * FROM guests WHERE 1=1';
   let pgQ = q;
   const p = [];
@@ -956,7 +1029,6 @@ app.get('/api/guests', requireAuth, async (req, res) => {
   if (guestGroup)   and(`AND guest_group=${sqlParam(p.length+1)}`, `AND guest_group=${sqlParam(p.length+1)}`, guestGroup);
   if (segment)      and(`AND segment=${sqlParam(p.length+1)}`,     `AND segment=${sqlParam(p.length+1)}`,     segment);
   if (inviteStatus) and(`AND invite_status=${sqlParam(p.length+1)}`, `AND invite_status=${sqlParam(p.length+1)}`, inviteStatus);
-  if (stdStatus)    and(`AND std_status=${sqlParam(p.length+1)}`,   `AND std_status=${sqlParam(p.length+1)}`,   stdStatus);
   if (rsvp)         and(`AND rsvp=${sqlParam(p.length+1)}`,         `AND rsvp=${sqlParam(p.length+1)}`,         rsvp);
   if (source)       and(`AND source=${sqlParam(p.length+1)}`,       `AND source=${sqlParam(p.length+1)}`,       source);
   if (addedByName)  and(`AND added_by_name=${sqlParam(p.length+1)}`, `AND added_by_name=${sqlParam(p.length+1)}`, addedByName);
@@ -981,8 +1053,6 @@ const FIELD_MAP = {
   partySize:          'party_size',
   segment:            'segment',
   inviteStatus:       'invite_status',
-  stdStatus:          'std_status',
-  stdVariant:         'std_variant',
   rsvp:               'rsvp',
   confirmedPartySize: 'confirmed_party_size',
   followUp:           'follow_up',
@@ -1032,7 +1102,6 @@ app.get('/api/stats', requireAuth, async (_req, res) => {
     const declined  = await dbGet(`SELECT COUNT(*) as c FROM guests WHERE rsvp='Declined'`);
     const pending   = await dbGet(`SELECT COUNT(*) as c FROM guests WHERE rsvp='Pending'`);
     const notSent   = await dbGet(`SELECT COUNT(*) as c FROM guests WHERE invite_status='Not Sent'`);
-    const stdSent   = await dbGet(`SELECT COUNT(*) as c FROM guests WHERE std_status='Sent' OR std_status='Delivered'`);
     const totalSeats = await dbGet(`SELECT SUM(party_size) as c FROM guests`);
     const attendingSeats = await dbGet(`SELECT SUM(COALESCE(confirmed_party_size, party_size)) as c FROM guests WHERE rsvp='Attending'`);
     let views = 0, submissions = 0;
@@ -1049,7 +1118,6 @@ app.get('/api/stats', requireAuth, async (_req, res) => {
       declined: Number(declined?.c || 0),
       pending: Number(pending?.c || 0),
       notSent: Number(notSent?.c || 0),
-      stdSent: Number(stdSent?.c || 0),
       totalSeats: Number(totalSeats?.c || 0),
       attendingSeats: Number(attendingSeats?.c || 0),
       views,
@@ -1065,7 +1133,7 @@ app.get('/api/export.csv', requireAuth, async (_req, res) => {
   if (!CONFIG.features.csvExport) return res.status(403).send('CSV export disabled');
   try {
     const rows = await dbAll('SELECT * FROM guests ORDER BY id');
-    const header = ['ID','Name','Group','Segment','Party','Mobile','Email','Invite','Invite Sent','STD','STD Variant','RSVP','Confirmed','Dietary','Notes','Attending Events','Maybe Events','Declined Events','Follow Up','Source','Invite Token','Created'];
+    const header = ['ID','Name','Group','Segment','Party','Mobile','Email','Invite','Invite Sent','RSVP','Confirmed','Dietary','Notes','Attending Events','Maybe Events','Declined Events','Follow Up','Source','Invite Token','Created'];
     const lines = [header.map(csvQ).join(',')];
     for (const r of rows) {
       const sel = parseEventSelections(r.event_selections);
@@ -1074,7 +1142,6 @@ app.get('/api/export.csv', requireAuth, async (_req, res) => {
         r.id, csvQ(r.guest_name), csvQ(r.guest_group), csvQ(r.segment), r.party_size,
         csvQ(r.mobile_number), csvQ(r.email_address),
         csvQ(r.invite_status), csvQ(r.invite_sent_date || ''),
-        csvQ(r.std_status), csvQ(r.std_variant || ''),
         csvQ(r.rsvp), r.confirmed_party_size ?? '',
         csvQ(r.dietary), csvQ(r.notes),
         csvQ(pick('attending')), csvQ(pick('maybe')), csvQ(pick('declined')),
@@ -1109,10 +1176,10 @@ app.post('/api/import.json', requireAuth, async (req, res) => {
     let imported = 0;
     for (const g of guests) {
       await dbRun(
-        `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, invite_status, rsvp, confirmed_party_size, follow_up, notes, dietary, event_selections, source, invite_token, std_status, std_variant)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, invite_status, rsvp, confirmed_party_size, follow_up, notes, dietary, event_selections, source, invite_token, std_status, std_variant)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+        `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, invite_status, rsvp, confirmed_party_size, follow_up, notes, dietary, event_selections, source, invite_token)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, invite_status, rsvp, confirmed_party_size, follow_up, notes, dietary, event_selections, source, invite_token)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
         [g.guest_group || g.guestGroup || '', g.guest_name || g.guestName || 'Unnamed',
          g.mobile_number || g.mobileNumber || '', g.email_address || g.emailAddress || '',
          g.added_by_name || g.addedByName || '', g.added_by_initials || g.addedByInitials || '',
@@ -1125,9 +1192,7 @@ app.post('/api/import.json', requireAuth, async (req, res) => {
          g.notes || '', g.dietary || '',
          typeof g.event_selections === 'string' ? g.event_selections : JSON.stringify(g.event_selections || g.eventSelections || []),
          g.source || 'import',
-         g.invite_token || g.inviteToken || makeInviteToken(),
-         g.std_status || g.stdStatus || 'Not Sent',
-         g.std_variant || g.stdVariant || '']
+         g.invite_token || g.inviteToken || makeInviteToken()]
       );
       imported += 1;
     }
@@ -1159,8 +1224,6 @@ function guestToFrontend(r) {
     eventSelections:    parseEventSelections(r.event_selections),
     source:             r.source,
     inviteToken:        r.invite_token,
-    stdStatus:          r.std_status,
-    stdVariant:         r.std_variant,
     createdAt:          r.created_at,
   };
 }

@@ -276,7 +276,7 @@
           if (asset.pageCount > 1) {
             const pager = ce('div', { class: 'pager' });
             pager.appendChild(ce('a', { class: 'btn small ghost', href: `/api/asset/${asset.id}/original`, target: '_blank', rel: 'noopener',
-              text: (copy && copy.downloadItinerary) || 'Open full invite' }));
+              text: (copy && copy.openFullInvite) || 'Open full invite' }));
             wrap.appendChild(pager);
           }
         } else {

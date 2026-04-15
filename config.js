@@ -24,21 +24,24 @@ module.exports = {
   // ── Event identity ───────────────────────────────────────────────────────
   // Single-event mode if `events[]` below is empty. All strings optional.
   event: {
-    title:        process.env.EVENT_TITLE        || 'Our Celebration',
-    subtitle:     process.env.EVENT_SUBTITLE     || '',
-    hostedBy:     process.env.EVENT_HOSTED_BY    || '',
-    dateLabel:    process.env.EVENT_DATE_LABEL   || '',
-    dateISO:      process.env.EVENT_DATE_ISO     || '',
-    timeLabel:    process.env.EVENT_TIME_LABEL   || '',
-    venue:        process.env.EVENT_VENUE        || '',
-    address:      process.env.EVENT_ADDRESS      || '',
-    city:         process.env.EVENT_CITY         || '',
-    mapsUrl:      process.env.EVENT_MAPS_URL     || '',
-    rsvpDeadline: process.env.RSVP_DEADLINE      || '',
-    dressCode:    process.env.DRESS_CODE         || '',
-    giftRegistry: process.env.GIFT_REGISTRY_URL  || '',
-    contactEmail: process.env.CONTACT_EMAIL      || '',
-    contactPhone: process.env.CONTACT_PHONE      || '',
+    title:           process.env.EVENT_TITLE         || 'Our Celebration',
+    subtitle:        process.env.EVENT_SUBTITLE      || '',
+    hostedBy:        process.env.EVENT_HOSTED_BY     || '',
+    dateLabel:       process.env.EVENT_DATE_LABEL    || '',
+    dateISO:         process.env.EVENT_DATE_ISO      || '',
+    timeLabel:       process.env.EVENT_TIME_LABEL    || '',
+    venue:           process.env.EVENT_VENUE         || '',
+    address:         process.env.EVENT_ADDRESS       || '',
+    city:            process.env.EVENT_CITY          || '',
+    mapsUrl:         process.env.EVENT_MAPS_URL      || '',
+    rsvpDeadline:    process.env.RSVP_DEADLINE       || '',
+    // Machine-readable RSVP deadline (YYYY-MM-DD or full ISO 8601).
+    // Drives `rsvp.lockAfterDeadline`. `rsvpDeadline` above is the human label.
+    rsvpDeadlineISO: process.env.RSVP_DEADLINE_ISO   || '',
+    dressCode:       process.env.DRESS_CODE          || '',
+    giftRegistry:    process.env.GIFT_REGISTRY_URL   || '',
+    contactEmail:    process.env.CONTACT_EMAIL       || '',
+    contactPhone:    process.env.CONTACT_PHONE       || '',
   },
 
   // ── Sub-events (0 or many) ───────────────────────────────────────────────
@@ -49,9 +52,8 @@ module.exports = {
   events: [],
 
   // ── Hosts / sides (0 or many) ─────────────────────────────────────────────
-  // Used for "hosted by" strip and for save-the-date variants.
-  // Empty = no host UI.
-  //   { id, label, slug, stdAssetSlug? }
+  // Used for "hosted by" strip. Empty = no host UI.
+  //   { id, label, slug }
   hosts: [],
 
   // ── Guest segments ────────────────────────────────────────────────────────
@@ -83,8 +85,6 @@ module.exports = {
     publicRsvp:     true,
     guestManager:   true,
     bulkMessaging:  true,
-    saveTheDate:    false,
-    pdfItinerary:   false,
     calendarExport: true,
     csvExport:      true,
     jsonBackup:     true,
@@ -104,7 +104,7 @@ module.exports = {
     eventsHeader:       'Events',
     hostsHeader:        'Hosted By',
     contactHeader:      'Questions?',
-    downloadItinerary:  'Download Itinerary',
+    openFullInvite:     'Open full invite',
     downloadCalendar:   'Add to Calendar',
     giftRegistryLink:   'Gift Registry',
     adminTitle:         'Event Admin',
@@ -346,15 +346,13 @@ module.exports = {
   assetRoles: [
     'hero',
     'background',
-    'std-default',
   ],
 
   // ── Messaging templates ──────────────────────────────────────────────────
   messaging: {
     inviteTemplate:
       'Hi {{name}}, you\u2019re invited to {{eventTitle}}{{eventDate}}. Details & RSVP: {{inviteUrl}}',
-    stdTemplate:
-      'Save the date for {{eventTitle}}{{eventDate}}. {{stdUrl}}',
+    // Reserved for Phase 5 (scheduled reminders). Not yet wired to a sender.
     reminderTemplate:
       'Hi {{name}}, reminder to RSVP for {{eventTitle}} by {{rsvpDeadline}}: {{inviteUrl}}',
   },
@@ -368,7 +366,5 @@ module.exports = {
   // ── Defaults ─────────────────────────────────────────────────────────────
   defaults: {
     partySize: 1,
-    segment:   '',
-    group:     '',
   },
 };
