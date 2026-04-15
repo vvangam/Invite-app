@@ -35,6 +35,12 @@ Every value is env-overridable. See [`.env.example`](.env.example).
 3. Push. Healthcheck at `/api/bootstrap`.
 4. If PDF uploads fail in prod, set `PDF_BACKEND=pdfjs` to use the pure-JS fallback instead of `poppler-utils`.
 
+### Optional: email channel
+
+Set `RESEND_API_KEY` + `RESEND_FROM_EMAIL` to unlock per-guest email send,
+bulk email, auto-reminders, and admin-notify on RSVP. Step-by-step in
+[docs/RESEND_SETUP.md](docs/RESEND_SETUP.md).
+
 See [CLAUDE.md](CLAUDE.md) for architectural details.
 
 ## License
