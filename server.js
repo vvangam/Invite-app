@@ -142,6 +142,7 @@ async function initDb() {
       )
     `);
     await ensureColumn('guests', 'party_members', "TEXT NOT NULL DEFAULT ''");
+    await ensureColumn('guests', 'household_id', "TEXT NOT NULL DEFAULT ''");
     return;
   }
 
@@ -215,6 +216,7 @@ async function initDb() {
 
   // Idempotent column backfills for long-lived databases.
   await ensureColumn('guests', 'party_members', "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn('guests', 'household_id', "TEXT NOT NULL DEFAULT ''");
 }
 
 // ── Tokens & helpers ────────────────────────────────────────────────────────
@@ -1135,6 +1137,7 @@ const FIELD_MAP = {
   followUp:           'follow_up',
   notes:              'notes',
   dietary:            'dietary',
+  householdId:        'household_id',
 };
 
 app.put('/api/guests/:id', requireAuth, async (req, res) => {
@@ -1175,6 +1178,7 @@ app.delete('/api/guests/:id', requireAuth, async (req, res) => {
 //   { ids:[...], action:'setRsvp',          value:'Attending' }
 //   { ids:[...], action:'setInviteStatus',  value:'Sent'      }
 //   { ids:[...], action:'setGroup',         value:'Family'    }  // '' clears
+//   { ids:[...], action:'setHousehold',     value:'<hhid>'    }  // '' unlinks
 //   { ids:[...], action:'delete' }
 app.post('/api/guests/bulk', requireAuth, async (req, res) => {
   const { ids, action, value } = req.body || {};
@@ -1195,6 +1199,7 @@ app.post('/api/guests/bulk', requireAuth, async (req, res) => {
     const col = action === 'setRsvp' ? 'rsvp'
       : action === 'setInviteStatus' ? 'invite_status'
       : action === 'setGroup' ? 'guest_group'
+      : action === 'setHousehold' ? 'household_id'
       : null;
     if (!col) return res.status(400).json({ ok: false, error: 'unknown action' });
     const val = String(value ?? '');
@@ -1472,6 +1477,7 @@ function guestToFrontend(r) {
     dietary:            parseDietary(r.dietary),
     eventSelections:    parseEventSelections(r.event_selections),
     partyMembers:       parsePartyMembers(r.party_members),
+    householdId:        r.household_id || '',
     source:             r.source,
     inviteToken:        r.invite_token,
     createdAt:          r.created_at,

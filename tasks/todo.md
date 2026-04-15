@@ -155,9 +155,16 @@ The admin currently hides the highest-leverage actions behind the
   RSVP / invite status / group). Per-row checkbox + select-all.
   Sticky bulk bar shows count + actions: Set RSVP, Set invite status,
   Set group, Delete. New `POST /api/guests/bulk` endpoint backs it.
-- [ ] **Household grouping.** New optional `household_id` column. Two
-  guests with same household_id render as a single row in the table
-  (expand to show members). Reduces visual noise for couples.
+- [x] **Household grouping.** New optional `household_id` column on
+  `guests`, wired via `ensureColumn()` for both Postgres and SQLite.
+  `guestToFrontend()` exposes it as `householdId`; `FIELD_MAP` supports
+  single-field PUT; `/api/guests/bulk` gains a `setHousehold` action (fresh
+  id to link, empty string to unlink). Admin list now groups visible guests
+  sharing a household_id into one collapsible row (desktop table + mobile
+  cards) with member count, comma-joined names, and a total party size on
+  the header. Households default to collapsed; expand state is per-session.
+  Bulk bar adds a "Link household" button (≥2 selected) and conditional
+  "Unlink" (shown when any selected guest already belongs to a household).
 - [x] **CSV import** — mirrors JSON restore. `POST /api/import.csv`
   with `preview:true` returns parsed headers + inferred column mapping
   + up to 10 projected sample rows. Commit step uses admin-overridden

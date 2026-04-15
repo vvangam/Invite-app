@@ -264,6 +264,16 @@
     .guest-card .fields { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .guest-card .actions { display:flex; flex-wrap:wrap; gap: 6px; }
     .guest-card .chk { display:flex; gap:6px; align-items:center; font-size:.85em; color: var(--fgMuted); }
+    /* Household grouping: the header row collapses N guests sharing a
+       household_id into a single visual unit. Children stay as normal rows
+       but gain a subtle left border so the grouping is legible. */
+    .hh-row td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+    .hh-row .hh-label { font-weight: 600; }
+    .hh-row .hh-meta { color: var(--fgMuted); font-size: .88em; margin-left: 4px; }
+    .hh-toggle { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0 6px; }
+    .hh-child td:nth-child(3) { padding-left: 26px; border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+    .guest-card.hh-card { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+    .guest-card.hh-card .hh-members { color: var(--fgMuted); font-size: .88em; margin-top: 2px; }
 
     @media (max-width: 640px) {
       th.mobile-hide, td.mobile-hide { display:none; }
@@ -622,6 +632,41 @@
       // Selected IDs are a Set so toggling is O(1); cleared on filter change
       // only when a row drops out of view (see visibleGuests).
       const selection = new Set();
+      // Households default to collapsed; this Set remembers which ones the
+      // admin has expanded. Persists across re-renders within a session.
+      const expandedHouseholds = new Set();
+
+      function newHouseholdId() {
+        // Short, human-visible, unique enough for in-app grouping; not a
+        // security boundary, so Math.random is fine.
+        return 'hh_' + Math.random().toString(36).slice(2, 10);
+      }
+
+      function groupVisibleByHousehold(visible) {
+        // Walks in original order, emitting solo rows or household entries
+        // at the position of the household's first visible member. Households
+        // with only one visible member degrade to a solo row (there's no
+        // grouping value in "1-member household").
+        const byHid = new Map();
+        for (const g of visible) {
+          const hid = (g.householdId || '').trim();
+          if (!hid) continue;
+          if (!byHid.has(hid)) byHid.set(hid, []);
+          byHid.get(hid).push(g);
+        }
+        const result = [];
+        const seen = new Set();
+        for (const g of visible) {
+          const hid = (g.householdId || '').trim();
+          if (!hid) { result.push({ type: 'solo', guest: g }); continue; }
+          if (seen.has(hid)) continue;
+          seen.add(hid);
+          const members = byHid.get(hid);
+          if (members.length === 1) result.push({ type: 'solo', guest: members[0] });
+          else result.push({ type: 'household', id: hid, members });
+        }
+        return result;
+      }
 
       function matchesFilters(g) {
         if (filters.rsvp && g.rsvp !== filters.rsvp) return false;
@@ -696,6 +741,7 @@
             }
 
             // Desktop table (hidden <640px via .guest-table CSS)
+            const grouped = groupVisibleByHousehold(visible);
             const table = ce('table', { class: 'guest-table' });
             const selectAllDesktop = ce('input', { type: 'checkbox' });
             selectAllDesktop.checked = visible.every(g => selection.has(g.id));
@@ -719,7 +765,42 @@
             ]));
             table.appendChild(thead);
             const tbody = ce('tbody');
-            for (const g of visible) {
+
+            function appendHouseholdHeader(entry) {
+              const isExpanded = expandedHouseholds.has(entry.id);
+              const memberIds = entry.members.map(m => m.id);
+              const headerChk = ce('input', { type: 'checkbox' });
+              headerChk.checked = memberIds.every(id => selection.has(id));
+              headerChk.indeterminate = !headerChk.checked && memberIds.some(id => selection.has(id));
+              headerChk.addEventListener('change', () => {
+                if (headerChk.checked) memberIds.forEach(id => selection.add(id));
+                else memberIds.forEach(id => selection.delete(id));
+                renderRows();
+              });
+              const toggleBtn = ce('button', { class: 'hh-toggle', type: 'button', 'aria-expanded': String(isExpanded), title: isExpanded ? 'Collapse' : 'Expand' }, [isExpanded ? '▾' : '▸']);
+              toggleBtn.addEventListener('click', () => {
+                if (isExpanded) expandedHouseholds.delete(entry.id);
+                else expandedHouseholds.add(entry.id);
+                renderRows();
+              });
+              const names = entry.members.map(m => m.guestName).filter(Boolean).join(', ');
+              const totalParty = entry.members.reduce((sum, m) => sum + (m.partySize || 1), 0);
+              const labelCell = ce('td', { colspan: '6' }, [
+                toggleBtn,
+                ce('span', { class: 'hh-label', text: `Household · ${entry.members.length} guests` }),
+                ce('span', { class: 'hh-meta', text: `— ${names}` }),
+              ]);
+              tbody.appendChild(ce('tr', { class: 'hh-row' }, [
+                ce('td', {}, [headerChk]),
+                ce('td', { class: 'muted', style: 'font-size:.85em', text: '—' }),
+                labelCell,
+                ce('td', { text: String(totalParty) }),
+                ce('td', { text: '' }),
+                ce('td', { text: '' }),
+              ]));
+            }
+
+            function appendGuestRow(g, isHouseholdChild) {
               const link = `${location.origin}/i/${g.inviteToken}`;
               const chk = ce('input', { type: 'checkbox' });
               chk.checked = selection.has(g.id);
@@ -754,7 +835,7 @@
                   refreshGuests(); refreshStats();
                 } catch (e) { toast(e.message, 'error'); }
               }}, ['Delete']);
-              tbody.appendChild(ce('tr', {}, [
+              tbody.appendChild(ce('tr', isHouseholdChild ? { class: 'hh-child' } : {}, [
                 ce('td', {}, [chk]),
                 ce('td', { text: String(g.id) }),
                 ce('td', {}, [g.guestName, ce('br'), ce('span', { class: 'muted', style:'font-size:.85em', text: g.emailAddress || '' })]),
@@ -766,12 +847,21 @@
                 ce('td', {}, [ce('div', { class: 'row' }, [copyBtn, waBtn, delBtn].filter(Boolean))]),
               ]));
             }
+
+            for (const entry of grouped) {
+              if (entry.type === 'solo') { appendGuestRow(entry.guest, false); continue; }
+              appendHouseholdHeader(entry);
+              if (expandedHouseholds.has(entry.id)) {
+                for (const m of entry.members) appendGuestRow(m, true);
+              }
+            }
             table.appendChild(tbody);
             rowHost.appendChild(table);
 
             // Mobile card list (shown <640px via .guest-cards CSS)
             const cards = ce('div', { class: 'guest-cards' });
-            for (const g of visible) {
+
+            function appendGuestCard(g) {
               const link = `${location.origin}/i/${g.inviteToken}`;
               const chk = ce('input', { type: 'checkbox' });
               chk.checked = selection.has(g.id);
@@ -796,7 +886,7 @@
                 try { await api(`/api/guests/${g.id}`, { method: 'DELETE' }); refreshGuests(); refreshStats(); }
                 catch (e) { toast(e.message, 'error'); }
               }}, ['Delete']);
-              const card = ce('div', { class: 'guest-card' }, [
+              cards.appendChild(ce('div', { class: 'guest-card' }, [
                 ce('div', { class: 'top' }, [
                   ce('div', {}, [
                     ce('div', { class: 'name', text: g.guestName }),
@@ -810,8 +900,43 @@
                   ce('label', { class: 'field' }, [ce('span', { class: 'muted', style: 'font-size:.8em', text: 'Invite' }), invSel]),
                 ]),
                 ce('div', { class: 'actions' }, [copyBtn, waBtn, delBtn].filter(Boolean)),
-              ]);
-              cards.appendChild(card);
+              ]));
+            }
+
+            function appendHouseholdCard(entry) {
+              const isExpanded = expandedHouseholds.has(entry.id);
+              const memberIds = entry.members.map(m => m.id);
+              const chk = ce('input', { type: 'checkbox' });
+              chk.checked = memberIds.every(id => selection.has(id));
+              chk.indeterminate = !chk.checked && memberIds.some(id => selection.has(id));
+              chk.addEventListener('change', () => {
+                if (chk.checked) memberIds.forEach(id => selection.add(id));
+                else memberIds.forEach(id => selection.delete(id));
+                renderRows();
+              });
+              const toggleBtn = ce('button', { class: 'btn small ghost', type: 'button' }, [isExpanded ? 'Hide members' : 'Show members']);
+              toggleBtn.addEventListener('click', () => {
+                if (isExpanded) expandedHouseholds.delete(entry.id);
+                else expandedHouseholds.add(entry.id);
+                renderRows();
+              });
+              const names = entry.members.map(m => m.guestName).filter(Boolean).join(', ');
+              cards.appendChild(ce('div', { class: 'guest-card hh-card' }, [
+                ce('div', { class: 'top' }, [
+                  ce('div', {}, [
+                    ce('div', { class: 'name', text: `Household · ${entry.members.length} guests` }),
+                    ce('div', { class: 'hh-members', text: names }),
+                  ]),
+                  ce('label', { class: 'chk' }, [chk, 'select']),
+                ]),
+                ce('div', { class: 'actions' }, [toggleBtn]),
+              ]));
+              if (isExpanded) for (const m of entry.members) appendGuestCard(m);
+            }
+
+            for (const entry of grouped) {
+              if (entry.type === 'solo') appendGuestCard(entry.guest);
+              else appendHouseholdCard(entry);
             }
             rowHost.appendChild(cards);
 
@@ -850,6 +975,23 @@
               const label = groupAction.value || '(cleared)';
               await bulkApply('setGroup', groupAction.value, `Group set to ${label}`);
             });
+            // Household link/unlink: link requires 2+ guests and generates a
+            // fresh id client-side; unlink only shows when at least one
+            // selected guest is currently in a household.
+            const selectedGuests = STATE.guests.filter(g => selection.has(g.id));
+            const anyInHousehold = selectedGuests.some(g => (g.householdId || '').trim());
+            const linkBtn = ce('button', { class: 'btn small ghost', onclick: async () => {
+              if (selection.size < 2) {
+                toast('Select at least 2 guests to link as a household.', 'info');
+                return;
+              }
+              const hid = newHouseholdId();
+              expandedHouseholds.add(hid);
+              await bulkApply('setHousehold', hid, `${selection.size} guests linked as a household`);
+            }}, ['Link household']);
+            const unlinkBtn = anyInHousehold ? ce('button', { class: 'btn small ghost', onclick: async () => {
+              await bulkApply('setHousehold', '', 'Household link removed');
+            }}, ['Unlink']) : null;
             const delBtn = ce('button', { class: 'btn small danger', onclick: async () => {
               if (!confirm(`Delete ${selection.size} guest${selection.size === 1 ? '' : 's'}?`)) return;
               await bulkApply('delete', undefined, `${selection.size} guests deleted`);
@@ -858,6 +1000,8 @@
             bulkBarEl.appendChild(rsvpAction);
             bulkBarEl.appendChild(invAction);
             bulkBarEl.appendChild(groupAction);
+            bulkBarEl.appendChild(linkBtn);
+            if (unlinkBtn) bulkBarEl.appendChild(unlinkBtn);
             bulkBarEl.appendChild(ce('span', { class: 'spacer' }));
             bulkBarEl.appendChild(clearBtn);
             bulkBarEl.appendChild(delBtn);
