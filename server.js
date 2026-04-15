@@ -293,7 +293,14 @@ setInterval(() => {
 // ── App setup ───────────────────────────────────────────────────────────────
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '7d' }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '7d',
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+  },
+}));
 
 app.get('/', (_req, res) => res.redirect('/invite.html'));
 app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
