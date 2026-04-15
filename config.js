@@ -123,6 +123,11 @@ module.exports = {
     // Admin notifications: fire-and-forget email to event.contactEmail on
     // every new RSVP submission. Also off by default.
     adminNotifications: false,
+    // Share button on the public invite page. Uses navigator.share() on
+    // mobile (native share sheet) and falls back to clipboard on desktop.
+    // The shared URL is always the token-stripped public URL — personal
+    // invite tokens never leak through share.
+    shareButton:        true,
   },
 
   // ── Copy overrides (every user-facing string) ────────────────────────────
@@ -159,6 +164,10 @@ module.exports = {
     rsvpClosed:         'RSVP is currently closed.',
     rsvpSubmitted:      'Your response has been recorded.',
     inviteNotFound:     'We couldn\u2019t find that invitation.',
+    shareHeader:        'Share',
+    shareLabel:         'Share this invite',
+    shareCopied:        'Link copied \u2713',
+    shareText:          'You\u2019re invited!',
   },
 
   // ── Theme presets (modular — admin picks one in Settings) ────────────────

@@ -214,8 +214,9 @@ guests without WhatsApp. Add channels + reminders.
 - [ ] **Real OG image on `/invite.html`** — currently OG meta is only
   on `/std/:slug` (which we're removing). Server-side render
   `/invite.html` with OG meta tags injected from `event` + hero asset.
-- [ ] **Share button on invite** — copy link, native share API on
-  mobile (`navigator.share`).
+- [x] **Share button on invite** — copy link, native share API on
+  mobile (`navigator.share`). Token-stripped URL so personal invite
+  tokens never leak via share.
 
 ## Phase 7 — Photo gallery (1 day)
 

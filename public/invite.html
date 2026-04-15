@@ -916,6 +916,37 @@
       return card;
     }
 
+    // Share card. Tries navigator.share() first (native sheet on mobile),
+    // falls back to clipboard on desktop / unsupported browsers. The shared
+    // URL is intentionally the token-stripped public URL — personal invite
+    // tokens are per-guest and must not leak when someone hits "Share".
+    function renderShare(event, copy, features) {
+      if (!(features && features.shareButton)) return null;
+      const card = ce('section', { class: 'card reveal share-card' });
+      card.appendChild(ce('h2', { text: copy.shareHeader || 'Share' }));
+      const btn = ce('button', { class: 'btn', type: 'button', text: copy.shareLabel || 'Share this invite' });
+      const publicShareUrl = () => location.origin + location.pathname;
+      btn.addEventListener('click', async () => {
+        const url = publicShareUrl();
+        const data = { title: (event && event.title) || document.title, text: copy.shareText || '', url };
+        try {
+          if (navigator.share && typeof navigator.share === 'function') {
+            await navigator.share(data);
+            return;
+          }
+        } catch (_) { /* user-cancelled or share threw — fall through to copy */ }
+        try {
+          await navigator.clipboard.writeText(url);
+          const original = btn.textContent;
+          btn.textContent = copy.shareCopied || 'Link copied \u2713';
+          btn.disabled = true;
+          setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1800);
+        } catch (_) { /* no clipboard perms — silently give up */ }
+      });
+      card.appendChild(btn);
+      return card;
+    }
+
     function renderContact(event, copy) {
       const hasEmail = event && event.contactEmail;
       const hasPhone = event && event.contactPhone;
@@ -1019,11 +1050,12 @@
       const faqSection        = renderFaq(payload.event, payload.copy);
       const registriesSection = renderRegistries(payload.event, payload.copy);
       const rsvpSection       = renderRsvpForm(filteredPayload);
+      const shareSection      = renderShare(payload.event, payload.copy, payload.features);
       const contactSection    = renderContact(payload.event, payload.copy);
 
       const parts = [
         hostsSection, detailsSection, eventsSection, travelSection,
-        faqSection, registriesSection, rsvpSection, contactSection,
+        faqSection, registriesSection, rsvpSection, shareSection, contactSection,
       ].filter(Boolean);
       for (const p of parts) app.appendChild(p);
 
@@ -1042,6 +1074,7 @@
         { id: 'faq',        label: payload.copy.faqHeader     || 'FAQ',                         el: faqSection },
         { id: 'registries', label: payload.copy.registriesHeader || 'Gifts',                    el: registriesSection },
         { id: 'rsvp',       label: payload.copy.rsvpHeader    || 'RSVP',                        el: rsvpSection },
+        { id: 'share',      label: payload.copy.shareHeader   || 'Share',                       el: shareSection },
         { id: 'contact',    label: payload.copy.contactHeader || 'Questions',                   el: contactSection },
       ]);
 
