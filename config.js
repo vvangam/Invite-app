@@ -43,7 +43,23 @@ module.exports = {
     // Drives `rsvp.lockAfterDeadline`. `rsvpDeadline` above is the human label.
     rsvpDeadlineISO: process.env.RSVP_DEADLINE_ISO   || '',
     dressCode:       process.env.DRESS_CODE          || '',
+    // Deprecated: use `registries` below. Still read as a fallback for
+    // existing configs — `mergedConfig` wraps it into a one-item array
+    // when `registries` is empty.
     giftRegistry:    process.env.GIFT_REGISTRY_URL   || '',
+    // Multiple gift registries. Each { label, url, note }. Empty = hidden.
+    registries:      [],
+    // Travel / logistics. Any field blank = hidden. Whole card hidden
+    // when every field is empty.
+    travel: {
+      hotelBlock:     process.env.EVENT_HOTEL_BLOCK    || '',
+      hotelUrl:       process.env.EVENT_HOTEL_URL      || '',
+      parking:        process.env.EVENT_PARKING        || '',
+      transport:      process.env.EVENT_TRANSPORT      || '',
+      accessibility:  process.env.EVENT_ACCESSIBILITY  || '',
+    },
+    // FAQ accordion. Each { q, a }. Empty array = hidden.
+    faq:             [],
     contactEmail:    process.env.CONTACT_EMAIL       || '',
     contactPhone:    process.env.CONTACT_PHONE       || '',
   },
@@ -111,6 +127,16 @@ module.exports = {
     openFullInvite:     'Open full invite',
     downloadCalendar:   'Add to Calendar',
     giftRegistryLink:   'Gift Registry',
+    navWelcome:         'Welcome',
+    travelHeader:       'Travel',
+    travelHotel:        'Hotel block',
+    travelHotelCta:     'Book room',
+    travelParking:      'Parking',
+    travelTransport:    'Transport',
+    travelAccess:       'Accessibility',
+    faqHeader:          'FAQ',
+    registriesHeader:   'Gifts',
+    registryView:       'View',
     adminTitle:         'Event Admin',
     adminTabSettings:   'Settings',
     adminTabAssets:     'Assets',

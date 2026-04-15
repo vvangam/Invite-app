@@ -128,6 +128,79 @@
     .plus-ones { display: grid; gap: 8px; margin-top: 6px; }
     .plus-ones .ph { color: var(--fgSubtle); font-size: .84em; text-transform: none; letter-spacing: 0; font-weight: 400; }
 
+    /* FAQ accordion. */
+    .faq-item {
+      border: 1px solid var(--border); border-radius: var(--radiusSm);
+      background: var(--surface2); margin-top: 10px; overflow: hidden;
+    }
+    .faq-item summary {
+      list-style: none; cursor: pointer; padding: .9em 1.1em;
+      font-weight: 600; font-family: var(--fontDisplay); font-size: 1.02rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item summary::after {
+      content: '+'; font-size: 1.3em; color: var(--accent); font-family: var(--fontBody);
+      transition: transform var(--motionFast) ease;
+    }
+    .faq-item[open] summary::after { content: '\2212'; }
+    .faq-item .faq-body {
+      padding: 0 1.1em 1em; color: var(--fgMuted);
+      line-height: 1.6; white-space: pre-wrap;
+    }
+
+    /* Travel / logistics card — same spacing rhythm as Details. */
+    .travel-grid { display: grid; gap: 14px; margin-top: 4px; }
+    .travel-row .lbl {
+      font-size: .72rem; letter-spacing: var(--trackingLoose); text-transform: uppercase;
+      color: var(--fgMuted); font-weight: 600; margin-bottom: 4px; font-family: var(--fontBody);
+    }
+    .travel-row .val { color: var(--fg); white-space: pre-wrap; }
+    .travel-row .val a { color: var(--accent); }
+
+    /* Registries list — stacked cards, CTA on each. */
+    .registries { display: grid; gap: 10px; margin-top: 4px; }
+    .registry {
+      display: flex; align-items: center; gap: 14px; justify-content: space-between;
+      padding: .9em 1.1em; border: 1px solid var(--border); border-radius: var(--radiusSm);
+      background: var(--surface2); flex-wrap: wrap;
+    }
+    .registry .info { flex: 1 1 200px; min-width: 0; }
+    .registry .lbl { font-weight: 600; font-family: var(--fontDisplay); font-size: 1.05rem; margin-bottom: 2px; }
+    .registry .note { color: var(--fgMuted); font-size: .88em; }
+
+    /* Timeline — vertical time-axis with event cards offset either side.
+       On narrow viewports collapses to a single column. */
+    .timeline { position: relative; margin-top: 8px; padding: 4px 0 8px; }
+    .timeline::before {
+      content: ''; position: absolute; top: 0; bottom: 0; left: 50%;
+      width: 1px; background: var(--border); transform: translateX(-.5px);
+    }
+    .timeline .t-item { position: relative; padding: 10px 0; }
+    .timeline .t-item .dot {
+      position: absolute; left: 50%; top: 22px; width: 10px; height: 10px; border-radius: 50%;
+      background: var(--accent); transform: translateX(-50%);
+      box-shadow: 0 0 0 4px var(--bg);
+    }
+    .timeline .t-card {
+      width: calc(50% - 22px); padding: 14px 16px;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+    }
+    .timeline .t-item:nth-child(odd)  .t-card { margin-left: auto; }
+    .timeline .t-item:nth-child(even) .t-card { margin-right: auto; }
+    .timeline .t-time {
+      font-size: .78em; letter-spacing: var(--trackingLoose); text-transform: uppercase;
+      color: var(--fgMuted); font-weight: 600; margin-bottom: 6px;
+      font-variant-numeric: tabular-nums;
+    }
+    .timeline .t-card h3 { margin: 0 0 .35em; font-size: 1.12rem; }
+    .timeline .t-card .meta { color: var(--fgMuted); font-size: .92em; margin: 0 0 .6em; }
+    @media (max-width: 540px) {
+      .timeline::before { left: 10px; }
+      .timeline .t-item .dot { left: 10px; }
+      .timeline .t-card { width: calc(100% - 30px); margin-left: 30px !important; margin-right: 0 !important; }
+    }
+
     /* Buttons. */
     .btn {
       display:inline-flex; align-items:center; justify-content:center; gap:.4em;
@@ -428,8 +501,8 @@
     function renderDetails(event, copy) {
       if (!event) return null;
       const anyContent = [event.title, event.hostedBy, event.dateLabel, event.timeLabel,
-                         event.venue, event.address, event.city, event.mapsUrl,
-                         event.dressCode, event.giftRegistry, event.contactEmail,
+                         event.venue, event.address, event.city, event.mapsUrl, event.mapsEmbedUrl,
+                         event.dressCode, event.contactEmail,
                          event.contactPhone, event.rsvpDeadline].some(v => v && String(v).trim());
       if (!anyContent) return null;
 
@@ -466,9 +539,123 @@
       } else if (event.mapsUrl) {
         actions.appendChild(ce('a', { class: 'btn small ghost', href: event.mapsUrl, target: '_blank', rel: 'noopener', text: 'Open map' }));
       }
-      if (event.giftRegistry) actions.appendChild(ce('a', { class: 'btn small ghost', href: event.giftRegistry, target: '_blank', rel: 'noopener', text: copy.giftRegistryLink || 'Gift Registry' }));
+      // Gift registry moved into its own Registries section; don't render
+      // the inline button here.
       if (actions.children.length) card.appendChild(actions);
 
+      return card;
+    }
+
+    // Registries card. Each { label, url, note }. `giftRegistry` legacy
+    // string is promoted server-side, so we always read from `registries`.
+    function renderRegistries(event, copy) {
+      const items = Array.isArray(event && event.registries) ? event.registries.filter(r => r && r.url) : [];
+      if (!items.length) return null;
+      const card = ce('section', { class: 'card reveal' });
+      card.appendChild(ce('h2', { text: copy.registriesHeader || 'Gifts' }));
+      const list = ce('div', { class: 'registries' });
+      for (const r of items) {
+        const info = ce('div', { class: 'info' });
+        info.appendChild(ce('div', { class: 'lbl', text: r.label || copy.giftRegistryLink || 'Gift Registry' }));
+        if (r.note) info.appendChild(ce('div', { class: 'note', text: r.note }));
+        const row = ce('div', { class: 'registry' }, [
+          info,
+          ce('a', { class: 'btn small ghost', href: r.url, target: '_blank', rel: 'noopener',
+            text: copy.registryView || 'View' }),
+        ]);
+        list.appendChild(row);
+      }
+      card.appendChild(list);
+      return card;
+    }
+
+    // Travel / logistics card. Each field optional; hide card if all empty.
+    function renderTravel(event, copy) {
+      const t = (event && event.travel) || {};
+      const rows = [
+        ['hotelBlock',    copy.travelHotel     || 'Hotel block',   t.hotelBlock],
+        ['parking',       copy.travelParking   || 'Parking',       t.parking],
+        ['transport',     copy.travelTransport || 'Transport',     t.transport],
+        ['accessibility', copy.travelAccess    || 'Accessibility', t.accessibility],
+      ].filter(([, , v]) => v && String(v).trim());
+      if (!rows.length && !t.hotelUrl) return null;
+
+      const card = ce('section', { class: 'card reveal' });
+      card.appendChild(ce('h2', { text: copy.travelHeader || 'Travel' }));
+      const grid = ce('div', { class: 'travel-grid' });
+
+      // Hotel block + hotelUrl render as a single row: text + CTA button.
+      if (t.hotelBlock || t.hotelUrl) {
+        const row = ce('div', { class: 'travel-row' });
+        row.appendChild(ce('div', { class: 'lbl', text: copy.travelHotel || 'Hotel block' }));
+        const val = ce('div', { class: 'val', text: t.hotelBlock || '' });
+        if (t.hotelUrl) {
+          const actions = ce('div', { class: 'row', style: 'margin-top:6px;' }, [
+            ce('a', { class: 'btn small ghost', href: t.hotelUrl, target: '_blank', rel: 'noopener',
+              text: copy.travelHotelCta || 'Book room' }),
+          ]);
+          val.appendChild(actions);
+        }
+        row.appendChild(val);
+        grid.appendChild(row);
+      }
+      for (const [key, lbl, v] of rows) {
+        if (key === 'hotelBlock') continue;  // already rendered above
+        const row = ce('div', { class: 'travel-row' }, [
+          ce('div', { class: 'lbl', text: lbl }),
+          ce('div', { class: 'val', text: v }),
+        ]);
+        grid.appendChild(row);
+      }
+      card.appendChild(grid);
+      return card;
+    }
+
+    // FAQ accordion via <details>/<summary>. Each item { q, a }.
+    function renderFaq(event, copy) {
+      const items = Array.isArray(event && event.faq) ? event.faq.filter(x => x && (x.q || x.a)) : [];
+      if (!items.length) return null;
+      const card = ce('section', { class: 'card reveal' });
+      card.appendChild(ce('h2', { text: copy.faqHeader || 'FAQ' }));
+      for (const it of items) {
+        const body = ce('div', { class: 'faq-body', text: it.a || '' });
+        const det  = ce('details', { class: 'faq-item' }, [
+          ce('summary', { text: it.q || '' }),
+          body,
+        ]);
+        card.appendChild(det);
+      }
+      return card;
+    }
+
+    // Timeline view for sub-events — replaces the flat grid whenever there
+    // are 2+ events. Each event is rendered on the vertical spine with the
+    // card offset left/right, and its time shown inline.
+    function renderTimeline(events, copy, features) {
+      if (!events || events.length <= 1) return null;
+      const card = ce('section', { class: 'card reveal' });
+      card.appendChild(ce('h2', { text: copy.eventsHeader || 'Events' }));
+      const wrap = ce('div', { class: 'timeline' });
+      for (const ev of events) {
+        const item = ce('div', { class: 't-item' });
+        item.appendChild(ce('div', { class: 'dot' }));
+        const box = ce('div', { class: 't-card' });
+        const time = [ev.dateLabel, ev.timeLabel].filter(Boolean).join(' \u00b7 ');
+        if (time) box.appendChild(ce('div', { class: 't-time', text: time }));
+        box.appendChild(ce('h3', { text: ev.name }));
+        if (ev.venue) box.appendChild(ce('div', { class: 'meta', text: [ev.venue, ev.address, ev.city].filter(Boolean).join(', ') }));
+        if (ev.description) box.appendChild(ce('p', { text: ev.description }));
+        const actions = ce('div', { class: 'row' });
+        if (ev.mapsUrl) actions.appendChild(ce('a', { class: 'btn small ghost', href: ev.mapsUrl, target: '_blank', rel: 'noopener', text: 'Map' }));
+        if (features && features.calendarExport) {
+          actions.appendChild(ce('button', { class: 'btn small ghost', type: 'button',
+            onclick: () => downloadIcs(ev) }, [copy.downloadCalendar || 'Add to Calendar']));
+        }
+        if (actions.children.length) box.appendChild(actions);
+        item.appendChild(box);
+        wrap.appendChild(item);
+      }
+      card.appendChild(wrap);
       return card;
     }
 
@@ -738,13 +925,20 @@
       const heroSection = renderHero(hero, payload.event.title, payload.event.subtitle, payload.copy, heroSurface, payload.event);
       app.appendChild(heroSection);
 
-      const detailsSection = renderDetails(payload.event, payload.copy);
-      const hostsSection   = renderHosts(payload.hosts, payload.copy);
-      const eventsSection  = renderEvents(visibleEvents, payload.copy, payload.features);
-      const rsvpSection    = renderRsvpForm(filteredPayload);
-      const contactSection = renderContact(payload.event, payload.copy);
+      const detailsSection    = renderDetails(payload.event, payload.copy);
+      const hostsSection      = renderHosts(payload.hosts, payload.copy);
+      const eventsSection     = renderTimeline(visibleEvents, payload.copy, payload.features)
+                             || renderEvents(visibleEvents, payload.copy, payload.features);
+      const travelSection     = renderTravel(payload.event, payload.copy);
+      const faqSection        = renderFaq(payload.event, payload.copy);
+      const registriesSection = renderRegistries(payload.event, payload.copy);
+      const rsvpSection       = renderRsvpForm(filteredPayload);
+      const contactSection    = renderContact(payload.event, payload.copy);
 
-      const parts = [hostsSection, detailsSection, eventsSection, rsvpSection, contactSection].filter(Boolean);
+      const parts = [
+        hostsSection, detailsSection, eventsSection, travelSection,
+        faqSection, registriesSection, rsvpSection, contactSection,
+      ].filter(Boolean);
       for (const p of parts) app.appendChild(p);
 
       if (!payload.guestFound && getToken()) {
@@ -754,12 +948,15 @@
 
       // Section nav — only built from sections we actually rendered.
       mountSectionNav(app, [
-        { id: 'welcome',  label: 'Welcome',                                       el: heroSection },
-        { id: 'hosts',    label: payload.copy.hostsHeader   || 'Hosted By',       el: hostsSection },
-        { id: 'details',  label: payload.copy.detailsHeader || 'Details',         el: detailsSection },
-        { id: 'events',   label: payload.copy.eventsHeader  || 'Events',          el: eventsSection },
-        { id: 'rsvp',     label: payload.copy.rsvpHeader    || 'RSVP',            el: rsvpSection },
-        { id: 'contact',  label: payload.copy.contactHeader || 'Questions',       el: contactSection },
+        { id: 'welcome',    label: (payload.copy.navWelcome)  || 'Welcome',                     el: heroSection },
+        { id: 'hosts',      label: payload.copy.hostsHeader   || 'Hosted By',                   el: hostsSection },
+        { id: 'details',    label: payload.copy.detailsHeader || 'Details',                     el: detailsSection },
+        { id: 'events',     label: payload.copy.eventsHeader  || 'Events',                      el: eventsSection },
+        { id: 'travel',     label: payload.copy.travelHeader  || 'Travel',                      el: travelSection },
+        { id: 'faq',        label: payload.copy.faqHeader     || 'FAQ',                         el: faqSection },
+        { id: 'registries', label: payload.copy.registriesHeader || 'Gifts',                    el: registriesSection },
+        { id: 'rsvp',       label: payload.copy.rsvpHeader    || 'RSVP',                        el: rsvpSection },
+        { id: 'contact',    label: payload.copy.contactHeader || 'Questions',                   el: contactSection },
       ]);
 
       observeReveals(app);

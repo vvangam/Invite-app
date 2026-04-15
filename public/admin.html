@@ -666,6 +666,85 @@
       }
       identity.appendChild(idGrid);
 
+      // ── Travel / logistics ────────────────────────────────────────────
+      draft.event.travel ||= {};
+      const travelCard = ce('div', { class: 'card' }, [
+        ce('h2', { text: 'Travel & logistics' }),
+        ce('p', { class: 'muted', text: 'Each field is optional. The whole card hides on the public invite if every field is empty.' }),
+      ]);
+      const travelGrid = ce('div', { class: 'grid' });
+      const TRAVEL_FIELDS = [
+        ['hotelBlock',    'Hotel block',   'e.g. Taj Krishna — room block "VANGAM2026"'],
+        ['hotelUrl',      'Hotel URL',     'https://...'],
+        ['parking',       'Parking',       'e.g. Valet available; free self-parking'],
+        ['transport',     'Transport',     'e.g. Shuttles run 5 PM from Taj lobby'],
+        ['accessibility', 'Accessibility', 'e.g. Step-free entry; lift on the west side'],
+      ];
+      for (const [key, label, placeholder] of TRAVEL_FIELDS) {
+        travelGrid.appendChild(field(label, draft.event.travel[key], (v) => { draft.event.travel[key] = v; }, { placeholder }));
+      }
+      travelCard.appendChild(travelGrid);
+
+      // ── Registries repeater ───────────────────────────────────────────
+      draft.event.registries = Array.isArray(draft.event.registries) ? draft.event.registries.slice() : [];
+      // Promote the legacy string into the first slot once so admins can
+      // edit it in the new UI. Never written back to `giftRegistry` — the
+      // server synthesizes the one-item array on merged reads.
+      if (!draft.event.registries.length && draft.event.giftRegistry) {
+        draft.event.registries.push({ label: 'Gift Registry', url: draft.event.giftRegistry, note: '' });
+      }
+      const regCard = ce('div', { class: 'card' }, [
+        ce('h2', { text: 'Gift registries' }),
+        ce('p', { class: 'muted', text: 'Add one or many. Each shows as a row with a "View" button on the public invite.' }),
+      ]);
+      const regList = ce('div');
+      function renderRegistries() {
+        regList.innerHTML = '';
+        draft.event.registries.forEach((r, i) => {
+          const row = ce('div', { class: 'card', style: 'background: var(--surface2)' });
+          const grid = ce('div', { class: 'grid' });
+          grid.appendChild(field('Label',  r.label,  (v) => { r.label = v; },  { placeholder: 'e.g. Amazon wishlist' }));
+          grid.appendChild(field('URL',    r.url,    (v) => { r.url = v; },    { placeholder: 'https://...' }));
+          grid.appendChild(field('Note',   r.note,   (v) => { r.note = v; },   { placeholder: 'Optional — shown under the label' }));
+          row.appendChild(grid);
+          row.appendChild(ce('button', { class: 'btn small danger', style: 'margin-top:10px;',
+            onclick: () => { draft.event.registries.splice(i, 1); renderRegistries(); } }, ['Remove']));
+          regList.appendChild(row);
+        });
+      }
+      renderRegistries();
+      regCard.appendChild(regList);
+      regCard.appendChild(ce('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+        draft.event.registries.push({ label: '', url: '', note: '' }); renderRegistries();
+      }}, ['+ Add registry']));
+
+      // ── FAQ repeater ──────────────────────────────────────────────────
+      draft.event.faq = Array.isArray(draft.event.faq) ? draft.event.faq.slice() : [];
+      const faqCard = ce('div', { class: 'card' }, [
+        ce('h2', { text: 'FAQ' }),
+        ce('p', { class: 'muted', text: 'Collapsible Q/A accordion. Empty = section hidden on the public invite.' }),
+      ]);
+      const faqList = ce('div');
+      function renderFaqs() {
+        faqList.innerHTML = '';
+        draft.event.faq.forEach((it, i) => {
+          const row = ce('div', { class: 'card', style: 'background: var(--surface2)' });
+          row.appendChild(field('Question', it.q, (v) => { it.q = v; }, { placeholder: 'e.g. Is there a dress code?' }));
+          const ta = ce('textarea', { rows: 3, placeholder: 'Answer — line breaks preserved on the invite.' });
+          ta.value = it.a || '';
+          ta.addEventListener('input', () => { it.a = ta.value; });
+          row.appendChild(ce('label', { class: 'field' }, ['Answer', ta]));
+          row.appendChild(ce('button', { class: 'btn small danger', style: 'margin-top:10px;',
+            onclick: () => { draft.event.faq.splice(i, 1); renderFaqs(); } }, ['Remove']));
+          faqList.appendChild(row);
+        });
+      }
+      renderFaqs();
+      faqCard.appendChild(faqList);
+      faqCard.appendChild(ce('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+        draft.event.faq.push({ q: '', a: '' }); renderFaqs();
+      }}, ['+ Add question']));
+
       // ── Hero copy ─────────────────────────────────────────────────────
       const copyCard = ce('div', { class: 'card' }, [ce('h2', { text: 'Public invite copy' })]);
       const copyGrid = ce('div', { class: 'grid' });
@@ -974,6 +1053,9 @@
         draft.rsvp.statusOptions = (draft.rsvp.statusOptions || []).map(s => String(s || '').trim()).filter(Boolean);
         if (!draft.rsvp.statusOptions.length) draft.rsvp.statusOptions = ['Attending', 'Maybe', 'Declined'];
         draft.guestSegments = (draft.guestSegments || []).filter(s => s && s.id);
+        // Prune empty FAQ / registry rows so the public invite stays tidy.
+        draft.event.registries = (draft.event.registries || []).filter(r => r && r.url);
+        draft.event.faq        = (draft.event.faq || []).filter(it => it && (it.q || it.a));
         try {
           await api('/api/config', { method: 'PUT', body: { config: {
             event: draft.event, events: draft.events, hosts: draft.hosts,
@@ -999,6 +1081,9 @@
 
       host.appendChild(themeCard);
       host.appendChild(identity);
+      host.appendChild(travelCard);
+      host.appendChild(regCard);
+      host.appendChild(faqCard);
       host.appendChild(copyCard);
       host.appendChild(hostsCard);
       host.appendChild(eventsCard);

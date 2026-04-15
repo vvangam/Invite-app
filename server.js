@@ -516,6 +516,14 @@ async function mergedConfig() {
     if (overrides[key] == null) continue;
     merged[key] = deepMerge(CONFIG[key], overrides[key]);
   }
+  // Legacy shim: if registries[] is empty but the old single giftRegistry
+  // string is set, wrap it so the new multi-registry renderer still shows
+  // it. Never written back — just synthesized on read.
+  if (merged.event && (!Array.isArray(merged.event.registries) || !merged.event.registries.length)
+      && merged.event.giftRegistry) {
+    const label = (merged.copy && merged.copy.giftRegistryLink) || 'Gift Registry';
+    merged.event = { ...merged.event, registries: [{ label, url: merged.event.giftRegistry, note: '' }] };
+  }
   return merged;
 }
 

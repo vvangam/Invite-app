@@ -85,15 +85,19 @@ Take the page from one long invite to a navigable site, mirroring Joy/Zola.
 - [x] **Map embed** — new `event.mapsEmbedUrl` field. If set, renders an
   iframe inside the Details card; otherwise keeps the "Open map" button.
   Editable in Settings.
-- [ ] **Timeline view for sub-events** — vertical time-axis, time
-  centered on the spine, event cards offset. Replaces the flat grid.
-- [ ] **FAQ section** — new `event.faq: [{q, a}]` array, accordion render.
-  Editable in admin via repeater.
-- [ ] **Travel / logistics card** — new `event.travel: { hotelBlock, hotelUrl,
-  parking, transport, accessibility }`. Render as a card if any field set.
-- [ ] **Multiple registries** — convert `event.giftRegistry: string` to
-  `event.registries: [{label, url, note}]`. Migration: if old string
-  present, wrap into one-item array.
+- [x] **Timeline view for sub-events** — vertical time-axis with event cards
+  offset either side; collapses to a single column <540px. Replaces the flat
+  grid when `events[].length >= 2`; single-event keeps the old layout.
+- [x] **FAQ section** — `event.faq: [{q, a}]` array, `<details>`/`<summary>`
+  accordion render. Editable in admin via repeater.
+- [x] **Travel / logistics card** — `event.travel: { hotelBlock, hotelUrl,
+  parking, transport, accessibility }`. Card hides when all fields empty.
+  `hotelUrl` renders as a "Book room" CTA inside the Hotel block row.
+- [x] **Multiple registries** — `event.registries: [{label, url, note}]`.
+  Server-side shim in `mergedConfig` wraps a non-empty legacy
+  `event.giftRegistry` into a one-item array when `registries` is empty,
+  so existing configs keep working without touching stored overrides.
+  Admin editor promotes the string into the repeater on first open.
 - [x] **Plus-one names** — `partyMembers: string[]` on RSVP submit.
   When `partySize > 1`, renders `partySize - 1` name fields; names are
   trimmed, empty entries dropped, and the list is capped at `partySize-1`
