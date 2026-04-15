@@ -60,6 +60,18 @@ async function dbAll(sqliteSql, pgSql = sqliteSql, params = []) {
   return sqlite.prepare(sqliteSql).all(...params);
 }
 
+// Idempotent column add. PG has native ADD COLUMN IF NOT EXISTS; SQLite
+// needs to introspect via PRAGMA table_info. Safe to call at every boot.
+async function ensureColumn(table, column, sqliteType, pgType = sqliteType) {
+  if (pg) {
+    await pg.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${pgType}`);
+    return;
+  }
+  const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all();
+  if (rows.some(r => r.name === column)) return;
+  sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${sqliteType}`);
+}
+
 async function initDb() {
   if (pg) {
     await pg.query(`
@@ -81,6 +93,7 @@ async function initDb() {
         notes                TEXT    NOT NULL DEFAULT '',
         dietary              TEXT    NOT NULL DEFAULT '',
         event_selections     TEXT    NOT NULL DEFAULT '',
+        party_members        TEXT    NOT NULL DEFAULT '',
         source               TEXT    NOT NULL DEFAULT 'manual',
         invite_token         TEXT    NOT NULL DEFAULT '',
         std_status           TEXT    NOT NULL DEFAULT 'Not Sent',
@@ -128,6 +141,7 @@ async function initDb() {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await ensureColumn('guests', 'party_members', "TEXT NOT NULL DEFAULT ''");
     return;
   }
 
@@ -150,6 +164,7 @@ async function initDb() {
       notes                TEXT    NOT NULL DEFAULT '',
       dietary              TEXT    NOT NULL DEFAULT '',
       event_selections     TEXT    NOT NULL DEFAULT '',
+      party_members        TEXT    NOT NULL DEFAULT '',
       source               TEXT    NOT NULL DEFAULT 'manual',
       invite_token         TEXT    NOT NULL DEFAULT '',
       std_status           TEXT    NOT NULL DEFAULT 'Not Sent',
@@ -197,6 +212,9 @@ async function initDb() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+
+  // Idempotent column backfills for long-lived databases.
+  await ensureColumn('guests', 'party_members', "TEXT NOT NULL DEFAULT ''");
 }
 
 // ── Tokens & helpers ────────────────────────────────────────────────────────
@@ -702,7 +720,8 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
   }
 
   const { token = '', name, phone = '', email = '', partySize = 1, segment = '',
-          rsvp = 'Attending', notes = '', dietary = '', eventSelections = [] } = req.body || {};
+          rsvp = 'Attending', notes = '', dietary = '', eventSelections = [],
+          partyMembers = [] } = req.body || {};
 
   if (!String(name || '').trim()) return res.status(400).json({ ok: false, error: 'Name required' });
 
@@ -710,6 +729,12 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
     const trimmedToken = String(token || '').trim();
     const normalized = normalizeEventSelections(eventSelections);
     const nextPartySize = String(rsvp) === 'Declined' ? 0 : Math.max(0, Number(partySize) || 0);
+    // Plus-one names: keep only non-empty trimmed strings, cap at partySize-1
+    // so we never outnumber the declared party.
+    const cleanedPartyMembers = Array.isArray(partyMembers)
+      ? partyMembers.map(s => String(s || '').trim()).filter(Boolean).slice(0, Math.max(0, nextPartySize - 1))
+      : [];
+    const partyMembersJson = JSON.stringify(cleanedPartyMembers);
     const allowSelfEdit = cfg.rsvp && cfg.rsvp.allowSelfEdit !== false;
 
     if (trimmedToken) {
@@ -723,11 +748,11 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
           return res.status(403).json({ ok: false, error: 'Your response is locked. Contact the host to make changes.' });
         }
         await dbRun(
-          `UPDATE guests SET guest_name=?, mobile_number=?, email_address=?, segment=?, rsvp=?, confirmed_party_size=?, notes=?, dietary=?, event_selections=?, invite_status='Sent' WHERE invite_token=?`,
-          `UPDATE guests SET guest_name=$1, mobile_number=$2, email_address=$3, segment=$4, rsvp=$5, confirmed_party_size=$6, notes=$7, dietary=$8, event_selections=$9, invite_status='Sent' WHERE invite_token=$10`,
+          `UPDATE guests SET guest_name=?, mobile_number=?, email_address=?, segment=?, rsvp=?, confirmed_party_size=?, notes=?, dietary=?, event_selections=?, party_members=?, invite_status='Sent' WHERE invite_token=?`,
+          `UPDATE guests SET guest_name=$1, mobile_number=$2, email_address=$3, segment=$4, rsvp=$5, confirmed_party_size=$6, notes=$7, dietary=$8, event_selections=$9, party_members=$10, invite_status='Sent' WHERE invite_token=$11`,
           [String(name).trim(), String(phone || guest.mobile_number).trim(), String(email || guest.email_address).trim(),
            String(segment || guest.segment).trim(), rsvp, nextPartySize, String(notes).trim(), String(dietary).trim(),
-           JSON.stringify(normalized), trimmedToken]
+           JSON.stringify(normalized), partyMembersJson, trimmedToken]
         );
         await logRsvpEvent(guest.id, 'submitted', req);
         const updated = await dbGet(
@@ -742,11 +767,11 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
     // Fallback: new public RSVP (no pre-existing token)
     const fallbackToken = makeInviteToken();
     await dbRun(
-      `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, rsvp, confirmed_party_size, notes, dietary, event_selections, invite_status, source, invite_token) VALUES ('', ?, ?, ?, 'Public RSVP', 'PR', ?, ?, ?, ?, ?, ?, ?, 'Sent', 'website', ?)`,
-      `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, rsvp, confirmed_party_size, notes, dietary, event_selections, invite_status, source, invite_token) VALUES ('', $1, $2, $3, 'Public RSVP', 'PR', $4, $5, $6, $7, $8, $9, $10, 'Sent', 'website', $11)`,
+      `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, rsvp, confirmed_party_size, notes, dietary, event_selections, party_members, invite_status, source, invite_token) VALUES ('', ?, ?, ?, 'Public RSVP', 'PR', ?, ?, ?, ?, ?, ?, ?, ?, 'Sent', 'website', ?)`,
+      `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, rsvp, confirmed_party_size, notes, dietary, event_selections, party_members, invite_status, source, invite_token) VALUES ('', $1, $2, $3, 'Public RSVP', 'PR', $4, $5, $6, $7, $8, $9, $10, $11, 'Sent', 'website', $12)`,
       [String(name).trim(), String(phone).trim(), String(email).trim(),
        Math.max(1, Number(partySize) || 1), String(segment).trim(), rsvp, nextPartySize,
-       String(notes).trim(), String(dietary).trim(), JSON.stringify(normalized), fallbackToken]
+       String(notes).trim(), String(dietary).trim(), JSON.stringify(normalized), partyMembersJson, fallbackToken]
     );
     const inserted = await dbGet(
       `SELECT * FROM guests WHERE invite_token=?`,
@@ -1255,6 +1280,7 @@ function guestToFrontend(r) {
     notes:              r.notes,
     dietary:            r.dietary,
     eventSelections:    parseEventSelections(r.event_selections),
+    partyMembers:       parsePartyMembers(r.party_members),
     source:             r.source,
     inviteToken:        r.invite_token,
     createdAt:          r.created_at,
@@ -1266,6 +1292,15 @@ function parseEventSelections(raw) {
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     return normalizeEventSelections(parsed);
+  } catch { return []; }
+}
+
+function parsePartyMembers(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(s => String(s || '').trim()).filter(Boolean);
   } catch { return []; }
 }
 

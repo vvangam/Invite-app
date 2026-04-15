@@ -75,6 +75,59 @@
 
     .hidden { display:none !important; }
 
+    /* Section nav — sticky pill strip. Renders only sections that exist. */
+    .section-nav {
+      position: sticky; top: 0; z-index: 10;
+      display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+      padding: 10px 4px; margin: -8px -4px 4px;
+      background: color-mix(in srgb, var(--bg) 82%, transparent);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .section-nav::-webkit-scrollbar { display: none; }
+    .section-nav a {
+      flex-shrink: 0; text-decoration: none; color: var(--fg);
+      font-size: .82em; letter-spacing: .04em; font-weight: 500;
+      padding: .4em .9em; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--surface2);
+      transition: background var(--motionFast) ease, color var(--motionFast) ease, border-color var(--motionFast) ease;
+    }
+    .section-nav a:hover { border-color: var(--accent); }
+    .section-nav a.active { background: var(--accent); color: var(--accentFg); border-color: var(--accent); }
+
+    /* Countdown — four pill tiles, big numeric face. */
+    .countdown {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+      margin-top: clamp(14px, 2.4vw, 22px);
+    }
+    .countdown .tile {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: clamp(10px, 2vw, 16px);
+      text-align: center;
+    }
+    .countdown .num {
+      font-family: var(--fontDisplay); font-size: clamp(1.6rem, 4.5vw, 2.6rem);
+      line-height: 1; font-variant-numeric: tabular-nums; font-weight: 500;
+      color: var(--fg); letter-spacing: var(--trackingTight);
+    }
+    .countdown .unit {
+      display: block; margin-top: 4px;
+      font-size: .7rem; letter-spacing: var(--trackingLoose); text-transform: uppercase;
+      color: var(--fgMuted); font-weight: 600;
+    }
+    .countdown.past .num { color: var(--fgSubtle); }
+
+    /* Map iframe embed. */
+    .map-embed {
+      width: 100%; aspect-ratio: 16 / 10;
+      border: 1px solid var(--border); border-radius: var(--radiusSm);
+      margin-top: 10px; background: var(--surface2);
+    }
+
+    /* Plus-one list. */
+    .plus-ones { display: grid; gap: 8px; margin-top: 6px; }
+    .plus-ones .ph { color: var(--fgSubtle); font-size: .84em; text-transform: none; letter-spacing: 0; font-weight: 400; }
+
     /* Buttons. */
     .btn {
       display:inline-flex; align-items:center; justify-content:center; gap:.4em;
@@ -248,13 +301,91 @@
       return r.json();
     }
 
+    // If the guest belongs to a segment that declares includesEventIds,
+    // return events limited to that set. Otherwise return events unchanged.
+    // Segments without includesEventIds (or empty) are treated as "all events".
+    function applySegmentFilter(events, segments, guest) {
+      if (!events || !events.length || !guest || !guest.segment) return events || [];
+      const seg = (segments || []).find(s => s && s.id === guest.segment);
+      if (!seg || !Array.isArray(seg.includesEventIds) || !seg.includesEventIds.length) return events;
+      const allow = new Set(seg.includesEventIds);
+      return events.filter(ev => allow.has(ev.id || ev.name));
+    }
+
+    // Countdown pegged to event.dateISO. Renders "Days / Hours / Min / Sec"
+    // until the date; after it, shows a soft "Today" / "Celebration past" state.
+    // Cleaned up via clearInterval when the page unloads (observed by mutation).
+    function renderCountdown(dateISO) {
+      if (!dateISO) return null;
+      const target = Date.parse(dateISO);
+      if (!Number.isFinite(target)) return null;
+      const root = ce('div', { class: 'countdown reveal', 'aria-live': 'off' });
+      const tiles = { d: ce('div', { class: 'num', text: '—' }),
+                      h: ce('div', { class: 'num', text: '—' }),
+                      m: ce('div', { class: 'num', text: '—' }),
+                      s: ce('div', { class: 'num', text: '—' }) };
+      const LABELS = [['d','Days'],['h','Hours'],['m','Min'],['s','Sec']];
+      for (const [k, lbl] of LABELS) {
+        root.appendChild(ce('div', { class: 'tile' }, [tiles[k], ce('span', { class: 'unit', text: lbl })]));
+      }
+      const tick = () => {
+        const diff = target - Date.now();
+        if (diff <= 0) { root.classList.add('past'); Object.values(tiles).forEach(t => t.textContent = '0'); return false; }
+        const s = Math.floor(diff / 1000);
+        tiles.d.textContent = String(Math.floor(s / 86400));
+        tiles.h.textContent = String(Math.floor((s % 86400) / 3600)).padStart(2, '0');
+        tiles.m.textContent = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+        tiles.s.textContent = String(s % 60).padStart(2, '0');
+        return true;
+      };
+      if (!tick()) return root;
+      const iv = setInterval(() => { if (!tick()) clearInterval(iv); }, 1000);
+      return root;
+    }
+
+    // Sticky section nav: renders pill links for each section present in the
+    // DOM. Uses IntersectionObserver to toggle .active on the currently
+    // visible section, so the highlight tracks scroll.
+    function mountSectionNav(host, sections) {
+      const live = sections.filter(s => s && s.el);
+      if (live.length < 2) return;  // 0-1 sections: no point navigating
+      const nav = ce('nav', { class: 'section-nav', 'aria-label': 'Page sections' });
+      const links = new Map();
+      for (const s of live) {
+        s.el.id = s.id;
+        const a = ce('a', { href: '#' + s.id, text: s.label, onclick: (e) => {
+          e.preventDefault();
+          s.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          history.replaceState(null, '', '#' + s.id);
+        }});
+        nav.appendChild(a);
+        links.set(s.id, a);
+      }
+      host.insertBefore(nav, host.firstChild);
+
+      if ('IntersectionObserver' in window) {
+        const io = new IntersectionObserver((entries) => {
+          // Use the most-visible entry that is intersecting.
+          let best = null;
+          for (const e of entries) {
+            if (!e.isIntersecting) continue;
+            if (!best || e.intersectionRatio > best.intersectionRatio) best = e;
+          }
+          if (!best) return;
+          const id = best.target.id;
+          links.forEach((a, key) => a.classList.toggle('active', key === id));
+        }, { threshold: [0.15, 0.5, 0.85], rootMargin: '-64px 0px -40% 0px' });
+        live.forEach(s => io.observe(s.el));
+      }
+    }
+
     function pickHeroAsset(payload) {
       const assets = payload.assets || {};
       const heroes = (assets.byRole && assets.byRole.hero) || [];
       return heroes[0] || null;
     }
 
-    function renderHero(asset, title, subtitle, copy, surfaceHint) {
+    function renderHero(asset, title, subtitle, copy, surfaceHint, event) {
       // heroSurface token controls how the hero is framed.
       //   'edge'        — no card chrome, asset goes edge-to-edge
       //   'flat'        — opaque surface, no blur
@@ -289,6 +420,8 @@
         if (subtitle) wrap.appendChild(ce('p',  { class: 'muted', text: subtitle }));
         if (copy && copy.heroFallback) wrap.appendChild(ce('p', { class: 'muted', text: copy.heroFallback }));
       }
+      const cd = renderCountdown(event && event.dateISO);
+      if (cd) wrap.appendChild(cd);
       return wrap;
     }
 
@@ -319,7 +452,20 @@
       ].forEach(el => { if (el) card.appendChild(el); });
 
       const actions = ce('div', { class: 'row', style: 'margin-top:8px;' });
-      if (event.mapsUrl)      actions.appendChild(ce('a', { class: 'btn small ghost', href: event.mapsUrl, target: '_blank', rel: 'noopener', text: 'Open map' }));
+      // If admin set a full embed URL, render the iframe instead of the
+      // small "Open map" button. mapsUrl still powers the ICS/backup link.
+      if (event.mapsEmbedUrl) {
+        card.appendChild(ce('iframe', {
+          class: 'map-embed',
+          src: event.mapsEmbedUrl,
+          loading: 'lazy',
+          referrerpolicy: 'no-referrer-when-downgrade',
+          allowfullscreen: 'allowfullscreen',
+          title: 'Venue map',
+        }));
+      } else if (event.mapsUrl) {
+        actions.appendChild(ce('a', { class: 'btn small ghost', href: event.mapsUrl, target: '_blank', rel: 'noopener', text: 'Open map' }));
+      }
       if (event.giftRegistry) actions.appendChild(ce('a', { class: 'btn small ghost', href: event.giftRegistry, target: '_blank', rel: 'noopener', text: copy.giftRegistryLink || 'Gift Registry' }));
       if (actions.children.length) card.appendChild(actions);
 
@@ -382,6 +528,7 @@
         phone:     guest ? guest.mobileNumber || '' : '',
         email:     guest ? guest.emailAddress  || '' : '',
         selections: (guest && guest.eventSelections) || [],
+        partyMembers: (guest && Array.isArray(guest.partyMembers)) ? guest.partyMembers.slice() : [],
       };
 
       const updateSelection = (id, name, status) => {
@@ -406,10 +553,29 @@
       }
       form.appendChild(statusWrap);
 
+      let plusOnesHost = null;
+      function renderPlusOnes() {
+        if (!plusOnesHost) return;
+        plusOnesHost.innerHTML = '';
+        const extra = Math.max(0, Number(state.partySize) - 1);
+        if (extra <= 0) return;
+        // Pad / trim the stored array to the current extra-guest count.
+        if (state.partyMembers.length > extra) state.partyMembers.length = extra;
+        while (state.partyMembers.length < extra) state.partyMembers.push('');
+        for (let i = 0; i < extra; i++) {
+          const inp = ce('input', { type: 'text', value: state.partyMembers[i] || '', placeholder: `Guest ${i + 2}` });
+          inp.addEventListener('input', (e) => { state.partyMembers[i] = e.target.value; });
+          plusOnesHost.appendChild(inp);
+        }
+      }
       if (fields.partySize && fields.partySize.enabled) {
         const input = ce('input', { type: 'number', name: 'partySize', min: '0', max: String(fields.partySize.max || 10), value: String(state.partySize) });
-        input.addEventListener('input', (e) => state.partySize = Number(e.target.value) || 0);
+        input.addEventListener('input', (e) => { state.partySize = Number(e.target.value) || 0; renderPlusOnes(); });
         form.appendChild(ce('label', {}, [fields.partySize.label || 'Party Size', input]));
+        plusOnesHost = ce('div', { class: 'plus-ones' });
+        form.appendChild(ce('label', {}, ['Names of other guests', plusOnesHost,
+          ce('span', { class: 'ph', text: 'We\u2019ll use these on your place cards and meal assignments.' })]));
+        renderPlusOnes();
       }
 
       let eventButtonsHost = null;
@@ -473,6 +639,7 @@
           notes:     state.notes,
           dietary:   state.dietary,
           eventSelections: state.selections,
+          partyMembers: state.partyMembers.map(s => String(s || '').trim()).filter(Boolean),
         };
         try {
           const r = await fetch('/api/rsvp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -559,23 +726,41 @@
       setCopy(payload.copy);
 
       app.innerHTML = '';
+
+      // Hide events outside the guest's segment, for both the events grid
+      // and the per-event RSVP picker. Keep the full list on payload.events
+      // for callers that still need it; rewrite what we hand to renderers.
+      const visibleEvents = applySegmentFilter(payload.events, payload.segments, payload.guest);
+      const filteredPayload = Object.assign({}, payload, { events: visibleEvents });
+
       const hero = pickHeroAsset(payload);
       const heroSurface = (payload.theme && payload.theme.tokens && payload.theme.tokens.heroSurface) || 'translucent';
-      app.appendChild(renderHero(hero, payload.event.title, payload.event.subtitle, payload.copy, heroSurface));
+      const heroSection = renderHero(hero, payload.event.title, payload.event.subtitle, payload.copy, heroSurface, payload.event);
+      app.appendChild(heroSection);
 
-      const parts = [
-        renderHosts(payload.hosts, payload.copy),
-        renderDetails(payload.event, payload.copy),
-        renderEvents(payload.events, payload.copy, payload.features),
-        renderRsvpForm(payload),
-        renderContact(payload.event, payload.copy),
-      ].filter(Boolean);
+      const detailsSection = renderDetails(payload.event, payload.copy);
+      const hostsSection   = renderHosts(payload.hosts, payload.copy);
+      const eventsSection  = renderEvents(visibleEvents, payload.copy, payload.features);
+      const rsvpSection    = renderRsvpForm(filteredPayload);
+      const contactSection = renderContact(payload.event, payload.copy);
+
+      const parts = [hostsSection, detailsSection, eventsSection, rsvpSection, contactSection].filter(Boolean);
       for (const p of parts) app.appendChild(p);
 
       if (!payload.guestFound && getToken()) {
         const warn = ce('div', { class: 'card muted', text: payload.copy.inviteNotFound || 'Invitation not found.' });
         app.insertBefore(warn, app.firstChild);
       }
+
+      // Section nav — only built from sections we actually rendered.
+      mountSectionNav(app, [
+        { id: 'welcome',  label: 'Welcome',                                       el: heroSection },
+        { id: 'hosts',    label: payload.copy.hostsHeader   || 'Hosted By',       el: hostsSection },
+        { id: 'details',  label: payload.copy.detailsHeader || 'Details',         el: detailsSection },
+        { id: 'events',   label: payload.copy.eventsHeader  || 'Events',          el: eventsSection },
+        { id: 'rsvp',     label: payload.copy.rsvpHeader    || 'RSVP',            el: rsvpSection },
+        { id: 'contact',  label: payload.copy.contactHeader || 'Questions',       el: contactSection },
+      ]);
 
       observeReveals(app);
     }

@@ -34,6 +34,10 @@ module.exports = {
     address:         process.env.EVENT_ADDRESS       || '',
     city:            process.env.EVENT_CITY          || '',
     mapsUrl:         process.env.EVENT_MAPS_URL      || '',
+    // Optional Google Maps embed URL (from "Share" → "Embed a map").
+    // When set, renders as an iframe in the Details card; otherwise falls
+    // back to the `mapsUrl` button.
+    mapsEmbedUrl:    process.env.EVENT_MAPS_EMBED_URL || '',
     rsvpDeadline:    process.env.RSVP_DEADLINE       || '',
     // Machine-readable RSVP deadline (YYYY-MM-DD or full ISO 8601).
     // Drives `rsvp.lockAfterDeadline`. `rsvpDeadline` above is the human label.

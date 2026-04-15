@@ -75,14 +75,16 @@ rest — these are features that already work but require shell access.
 
 Take the page from one long invite to a navigable site, mirroring Joy/Zola.
 
-- [ ] **Section nav** — sticky pill nav along the top: Welcome / Story /
-  Schedule / Travel / FAQ / Registry / RSVP. Click scrolls smoothly.
-  Render only sections with content (golden rule).
-- [ ] **Countdown timer** — animated `event.dateISO`-driven count, in the
-  hero card. Skip if undated. ~50 lines, no deps.
-- [ ] **Map embed** — new `event.mapsEmbedUrl` field. If set, render an
-  iframe; otherwise fall back to current "Open in Maps" link. No new
-  dep — Google Maps embed is iframe-based.
+- [x] **Section nav** — sticky pill nav along the top: Welcome / Hosts /
+  Details / Events / RSVP / Contact. Click scrolls smoothly.
+  IntersectionObserver highlights the active section. Renders only
+  sections that exist (golden rule).
+- [x] **Countdown timer** — animated `event.dateISO`-driven count
+  (Days / Hours / Min / Sec tiles), rendered inside the hero. Skips when
+  undated or past. No deps.
+- [x] **Map embed** — new `event.mapsEmbedUrl` field. If set, renders an
+  iframe inside the Details card; otherwise keeps the "Open map" button.
+  Editable in Settings.
 - [ ] **Timeline view for sub-events** — vertical time-axis, time
   centered on the spine, event cards offset. Replaces the flat grid.
 - [ ] **FAQ section** — new `event.faq: [{q, a}]` array, accordion render.
@@ -92,15 +94,18 @@ Take the page from one long invite to a navigable site, mirroring Joy/Zola.
 - [ ] **Multiple registries** — convert `event.giftRegistry: string` to
   `event.registries: [{label, url, note}]`. Migration: if old string
   present, wrap into one-item array.
-- [ ] **Plus-one names** — add `partyMembers: string[]` to RSVP submit.
-  When `partySize > 1`, render `partySize - 1` name fields.
-  Schema: add `party_members TEXT` column.
+- [x] **Plus-one names** — `partyMembers: string[]` on RSVP submit.
+  When `partySize > 1`, renders `partySize - 1` name fields; names are
+  trimmed, empty entries dropped, and the list is capped at `partySize-1`
+  server-side. Schema: `party_members TEXT` column added via idempotent
+  `ensureColumn()` migration helper (PG native, SQLite via PRAGMA).
 - [ ] **Per-attendee dietary** — when `fields.dietary.enabled`, render one
   textarea per attendee (with their name as label).
   Schema: change `dietary` to JSON or stringify.
-- [ ] **Per-event RSVP filtering by segment** — if guest has a `segment`
-  matching a `guestSegments[]` entry, hide events not in
-  `includesEventIds`. Currently shipped to client but ignored.
+- [x] **Per-event RSVP filtering by segment** — invite.html now applies
+  `applySegmentFilter(events, segments, guest)` before rendering both the
+  events grid and the per-event RSVP picker. Segments without
+  `includesEventIds` fall through to "all events" as before.
 - [ ] **Hero polish** — remove the translucent card around opaque PDFs;
   conditional `heroSurface: 'edge'` for PDF/PNG, `'card'` for photos.
 - [ ] Verify `prefers-reduced-motion` honored across new motion.
