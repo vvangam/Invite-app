@@ -108,6 +108,7 @@ module.exports = {
     downloadCalendar:   'Add to Calendar',
     giftRegistryLink:   'Gift Registry',
     adminTitle:         'Event Admin',
+    adminTabSettings:   'Settings',
     adminTabAssets:     'Assets',
     adminTabGuests:     'Guests',
     adminTabSend:       'Send',

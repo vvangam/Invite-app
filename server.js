@@ -414,6 +414,46 @@ function safeJson(str, fallback) {
   catch { return fallback; }
 }
 
+// ── Config overrides: DB-backed edits layered on top of config.js ───────────
+const CONFIG_KEY_ALLOWLIST = new Set([
+  'event', 'events', 'hosts', 'guestSegments', 'groups',
+  'copy', 'features', 'rsvp', 'theme', 'messaging', 'defaults', 'assetRoles',
+]);
+
+function isPlainObject(x) {
+  return x && typeof x === 'object' && !Array.isArray(x);
+}
+
+function deepMerge(base, override) {
+  if (Array.isArray(override)) return override.slice();
+  if (!isPlainObject(override)) return override;
+  const out = isPlainObject(base) ? { ...base } : {};
+  for (const [k, v] of Object.entries(override)) {
+    out[k] = isPlainObject(v) && isPlainObject(out[k]) ? deepMerge(out[k], v) : deepMerge(out[k], v);
+  }
+  return out;
+}
+
+async function loadOverrides() {
+  const rows = await dbAll(`SELECT key, value_json FROM config_overrides`);
+  const overrides = {};
+  for (const row of rows) {
+    if (!CONFIG_KEY_ALLOWLIST.has(row.key)) continue;
+    overrides[row.key] = safeJson(row.value_json, null);
+  }
+  return overrides;
+}
+
+async function mergedConfig() {
+  const overrides = await loadOverrides();
+  const merged = { ...CONFIG };
+  for (const key of Object.keys(overrides)) {
+    if (overrides[key] == null) continue;
+    merged[key] = deepMerge(CONFIG[key], overrides[key]);
+  }
+  return merged;
+}
+
 function assetToPublic(row) {
   const variants = safeJson(row.variants_json, {});
   const variantNames = Object.keys(variants);
@@ -434,22 +474,27 @@ function assetToPublic(row) {
 }
 
 // ── Routes: public ──────────────────────────────────────────────────────────
-app.get('/api/bootstrap', (_req, res) => {
-  res.json({
-    ok: true,
-    appVersion: CONFIG.appVersion,
-    copy:       CONFIG.copy,
-    features:   CONFIG.features,
-    theme:      CONFIG.theme,
-    requiresPin: Boolean(CONFIG.pin),
-    assetRoles: CONFIG.assetRoles,
-    defaults:   CONFIG.defaults,
-    rsvpFields: CONFIG.rsvp.fields,
-    rsvpStatusOptions: CONFIG.rsvp.statusOptions,
-    groups:     CONFIG.groups,
-    segments:   CONFIG.guestSegments,
-    hosts:      CONFIG.hosts,
-  });
+app.get('/api/bootstrap', async (_req, res) => {
+  try {
+    const cfg = await mergedConfig();
+    res.json({
+      ok: true,
+      appVersion: cfg.appVersion,
+      copy:       cfg.copy,
+      features:   cfg.features,
+      theme:      cfg.theme,
+      requiresPin: Boolean(cfg.pin),
+      assetRoles: cfg.assetRoles,
+      defaults:   cfg.defaults,
+      rsvpFields: cfg.rsvp.fields,
+      rsvpStatusOptions: cfg.rsvp.statusOptions,
+      groups:     cfg.groups,
+      segments:   cfg.guestSegments,
+      hosts:      cfg.hosts,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 app.get('/i/:token', (req, res) => {
@@ -499,16 +544,17 @@ app.get('/api/public-invite', async (req, res) => {
     }
 
     const assets = await loadAssetsByRole();
+    const cfg = await mergedConfig();
     res.json({
       ok: true,
-      event:      CONFIG.event,
-      events:     CONFIG.events,
-      hosts:      CONFIG.hosts,
-      segments:   CONFIG.guestSegments,
-      features:   CONFIG.features,
-      copy:       CONFIG.copy,
-      theme:      CONFIG.theme,
-      rsvp:       { fields: CONFIG.rsvp.fields, statusOptions: CONFIG.rsvp.statusOptions, allowSelfEdit: CONFIG.rsvp.allowSelfEdit, submittedCopy: CONFIG.rsvp.submittedCopy, lockAfterDeadline: CONFIG.rsvp.lockAfterDeadline },
+      event:      cfg.event,
+      events:     cfg.events,
+      hosts:      cfg.hosts,
+      segments:   cfg.guestSegments,
+      features:   cfg.features,
+      copy:       cfg.copy,
+      theme:      cfg.theme,
+      rsvp:       { fields: cfg.rsvp.fields, statusOptions: cfg.rsvp.statusOptions, allowSelfEdit: cfg.rsvp.allowSelfEdit, submittedCopy: cfg.rsvp.submittedCopy, lockAfterDeadline: cfg.rsvp.lockAfterDeadline },
       assets,
       guest,
       guestFound: Boolean(guest),
@@ -657,6 +703,47 @@ app.post('/api/logout', requireAuth, async (req, res) => {
     );
   }
   res.json({ ok: true });
+});
+
+// Config: read merged config for the admin form
+app.get('/api/config', requireAuth, async (_req, res) => {
+  try {
+    const cfg = await mergedConfig();
+    res.json({ ok: true, config: {
+      event: cfg.event, events: cfg.events, hosts: cfg.hosts,
+      guestSegments: cfg.guestSegments, groups: cfg.groups,
+      copy: cfg.copy, features: cfg.features, rsvp: cfg.rsvp,
+      theme: cfg.theme, messaging: cfg.messaging, defaults: cfg.defaults,
+    }});
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Config: upsert overrides (whitelist of keys)
+app.put('/api/config', requireAuth, async (req, res) => {
+  try {
+    const patch = (req.body && req.body.config) || req.body || {};
+    if (!isPlainObject(patch)) return res.status(400).json({ ok: false, error: 'config must be an object' });
+
+    const accepted = [];
+    for (const [key, value] of Object.entries(patch)) {
+      if (!CONFIG_KEY_ALLOWLIST.has(key)) continue;
+      const json = JSON.stringify(value ?? null);
+      await dbRun(
+        `INSERT INTO config_overrides (key, value_json, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=CURRENT_TIMESTAMP`,
+        `INSERT INTO config_overrides (key, value_json, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+           ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=CURRENT_TIMESTAMP`,
+        [key, json]
+      );
+      accepted.push(key);
+    }
+    const cfg = await mergedConfig();
+    res.json({ ok: true, accepted, config: cfg });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // Assets: list

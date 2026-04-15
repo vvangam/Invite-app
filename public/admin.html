@@ -149,6 +149,7 @@
 
     function tabs() {
       const list = [];
+      list.push(['settings', STATE.copy.adminTabSettings || 'Settings']);
       if (STATE.features.assetUpload)   list.push(['assets',  STATE.copy.adminTabAssets  || 'Assets']);
       if (STATE.features.guestManager)  list.push(['guests',  STATE.copy.adminTabGuests  || 'Guests']);
       if (STATE.features.bulkMessaging) list.push(['send',    STATE.copy.adminTabSend    || 'Send']);
@@ -174,6 +175,7 @@
     async function renderBody() {
       const main = qs('#main');
       main.innerHTML = '';
+      if (STATE.tab === 'settings') return renderSettingsTab(main);
       if (STATE.tab === 'assets')  return renderAssetsTab(main);
       if (STATE.tab === 'guests')  return renderGuestsTab(main);
       if (STATE.tab === 'send')    return renderSendTab(main);
@@ -446,6 +448,210 @@
     }
 
     // ─── Exports tab ───────────────────────────────────────────────────────
+    // ─── Settings tab ─────────────────────────────────────────────────────
+    async function renderSettingsTab(host) {
+      const loading = ce('p', { class: 'muted', text: 'Loading settings…' });
+      host.appendChild(loading);
+      let cfg;
+      try {
+        const r = await api('/api/config');
+        cfg = r.config || {};
+      } catch (e) {
+        loading.textContent = 'Failed to load settings: ' + e.message;
+        return;
+      }
+      host.removeChild(loading);
+
+      const draft = JSON.parse(JSON.stringify(cfg));
+      draft.event  ||= {};
+      draft.events ||= [];
+      draft.hosts  ||= [];
+      draft.copy   ||= {};
+      draft.features ||= {};
+      draft.theme  ||= {};
+
+      const status = ce('p', { class: 'muted', style: 'min-height:1.2em' });
+
+      function field(label, value, onInput, opts = {}) {
+        const input = ce(opts.type === 'textarea' ? 'textarea' : 'input', {
+          value: value ?? '', placeholder: opts.placeholder || '',
+          type: opts.type === 'textarea' ? undefined : (opts.type || 'text'),
+          rows: opts.type === 'textarea' ? 3 : undefined,
+        });
+        if (value != null) input.value = value;
+        input.addEventListener('input', () => onInput(input.value));
+        return ce('label', { class: 'field' }, [label, input]);
+      }
+
+      function checkbox(label, value, onChange) {
+        const input = ce('input', { type: 'checkbox' });
+        input.checked = Boolean(value);
+        input.addEventListener('change', () => onChange(input.checked));
+        return ce('label', { class: 'field', style: 'flex-direction:row; align-items:center; gap:8px;' }, [input, label]);
+      }
+
+      // ── Event identity ────────────────────────────────────────────────
+      const identity = ce('div', { class: 'card' }, [ce('h2', { text: 'Event identity' })]);
+      const idGrid = ce('div', { class: 'grid' });
+      const EV_FIELDS = [
+        ['title', 'Event title', 'e.g. Priya & Rahul'],
+        ['subtitle', 'Subtitle / tagline', 'e.g. are getting married'],
+        ['hostedBy', 'Hosted by (display)', 'e.g. The Vangam & Rao families'],
+        ['dateLabel', 'Date (display)', 'e.g. Saturday, Sept 14 2024'],
+        ['dateISO', 'Date (ISO, for calendar)', '2024-09-14'],
+        ['timeLabel', 'Time (display)', 'e.g. 4:00 PM onwards'],
+        ['venue', 'Venue', 'e.g. Taj Krishna'],
+        ['address', 'Address', 'e.g. Road No. 1, Banjara Hills'],
+        ['city', 'City', 'e.g. Hyderabad'],
+        ['mapsUrl', 'Google Maps URL', 'https://maps.google.com/...'],
+        ['rsvpDeadline', 'RSVP deadline (display)', 'e.g. by Aug 30'],
+        ['dressCode', 'Dress code', 'e.g. Traditional Indian'],
+        ['giftRegistry', 'Gift registry URL', 'https://...'],
+        ['contactEmail', 'Contact email', 'you@example.com'],
+        ['contactPhone', 'Contact phone', '+91 ...'],
+      ];
+      for (const [key, label, placeholder] of EV_FIELDS) {
+        idGrid.appendChild(field(label, draft.event[key], (v) => { draft.event[key] = v; }, { placeholder }));
+      }
+      identity.appendChild(idGrid);
+
+      // ── Hero copy ─────────────────────────────────────────────────────
+      const copyCard = ce('div', { class: 'card' }, [ce('h2', { text: 'Public invite copy' })]);
+      const copyGrid = ce('div', { class: 'grid' });
+      const COPY_FIELDS = [
+        ['inviteHeaderCta', 'Hero kicker', 'You\u2019re Invited'],
+        ['heroFallback', 'Hero subtitle', 'We can\u2019t wait to celebrate with you.'],
+        ['detailsHeader', 'Details section header', 'Details'],
+        ['eventsHeader', 'Events section header', 'Events'],
+        ['hostsHeader', 'Hosts section header', 'Hosted By'],
+        ['rsvpHeader', 'RSVP section header', 'RSVP'],
+        ['rsvpButton', 'RSVP submit button', 'Send RSVP'],
+        ['rsvpSubmitted', 'RSVP success message', 'Your response has been recorded.'],
+        ['contactHeader', 'Contact section header', 'Questions?'],
+      ];
+      for (const [key, label, placeholder] of COPY_FIELDS) {
+        copyGrid.appendChild(field(label, draft.copy[key], (v) => { draft.copy[key] = v; }, { placeholder }));
+      }
+      copyCard.appendChild(copyGrid);
+
+      // ── Features ──────────────────────────────────────────────────────
+      const featCard = ce('div', { class: 'card' }, [ce('h2', { text: 'Features' }),
+        ce('p', { class: 'muted', text: 'Turn sections on / off. Disabled sections disappear from the public page.' })]);
+      const featGrid = ce('div', { class: 'grid' });
+      const FEAT_FIELDS = [
+        ['publicRsvp', 'RSVP form'],
+        ['calendarExport', 'Add-to-calendar button'],
+        ['pdfItinerary', 'Itinerary download'],
+        ['saveTheDate', 'Save-the-date variants'],
+        ['bulkMessaging', 'Bulk messaging tab'],
+        ['guestManager', 'Guest manager tab'],
+        ['darkMode', 'Dark mode toggle'],
+      ];
+      for (const [key, label] of FEAT_FIELDS) {
+        featGrid.appendChild(checkbox(label, draft.features[key], (v) => { draft.features[key] = v; }));
+      }
+      featCard.appendChild(featGrid);
+
+      // ── Theme ─────────────────────────────────────────────────────────
+      const themeCard = ce('div', { class: 'card' }, [ce('h2', { text: 'Theme' })]);
+      const themeGrid = ce('div', { class: 'grid' });
+      const THEME_FIELDS = [
+        ['colorBg', 'Background color'],
+        ['colorFg', 'Text color'],
+        ['colorAccent', 'Accent color'],
+        ['colorMuted', 'Muted text color'],
+      ];
+      for (const [key, label] of THEME_FIELDS) {
+        themeGrid.appendChild(field(label, draft.theme[key], (v) => { draft.theme[key] = v; }));
+      }
+      themeCard.appendChild(themeGrid);
+
+      // ── Hosts repeater ────────────────────────────────────────────────
+      const hostsCard = ce('div', { class: 'card' }, [ce('h2', { text: 'Hosts / sides' }),
+        ce('p', { class: 'muted', text: 'Leave empty to hide the "Hosted By" strip.' })]);
+      const hostsList = ce('div');
+      function renderHosts() {
+        hostsList.innerHTML = '';
+        draft.hosts.forEach((h, i) => {
+          const row = ce('div', { class: 'card', style: 'background:#fafafa' });
+          const grid = ce('div', { class: 'grid' });
+          grid.appendChild(field('Display label', h.label, (v) => { h.label = v; }, { placeholder: 'e.g. Vangam Family' }));
+          grid.appendChild(field('Slug (a-z)', h.slug, (v) => { h.slug = v.toLowerCase().replace(/[^a-z0-9-]/g, '-'); }, { placeholder: 'e.g. vangam' }));
+          grid.appendChild(field('Role (optional)', h.role, (v) => { h.role = v; }, { placeholder: 'e.g. Parents of the bride' }));
+          row.appendChild(grid);
+          row.appendChild(ce('button', { class: 'btn small danger', onclick: () => { draft.hosts.splice(i, 1); renderHosts(); } }, ['Remove']));
+          hostsList.appendChild(row);
+        });
+      }
+      renderHosts();
+      hostsCard.appendChild(hostsList);
+      hostsCard.appendChild(ce('button', { class: 'btn small ghost', onclick: () => {
+        draft.hosts.push({ id: 'h' + Date.now(), label: '', slug: '', role: '' }); renderHosts();
+      }}, ['+ Add host']));
+
+      // ── Sub-events repeater ───────────────────────────────────────────
+      const eventsCard = ce('div', { class: 'card' }, [ce('h2', { text: 'Sub-events' }),
+        ce('p', { class: 'muted', text: 'Add ceremonies, receptions, etc. Leave empty for a single-event invite.' })]);
+      const evList = ce('div');
+      function renderEvents() {
+        evList.innerHTML = '';
+        draft.events.forEach((ev, i) => {
+          const row = ce('div', { class: 'card', style: 'background:#fafafa' });
+          const grid = ce('div', { class: 'grid' });
+          grid.appendChild(field('Name', ev.name, (v) => { ev.name = v; }, { placeholder: 'e.g. Mehendi' }));
+          grid.appendChild(field('Date (display)', ev.dateLabel, (v) => { ev.dateLabel = v; }, { placeholder: 'Fri, Sept 13' }));
+          grid.appendChild(field('Date (ISO)', ev.dateISO, (v) => { ev.dateISO = v; }, { placeholder: '2024-09-13' }));
+          grid.appendChild(field('Time (display)', ev.timeLabel, (v) => { ev.timeLabel = v; }, { placeholder: '5:00 PM' }));
+          grid.appendChild(field('Venue', ev.venue, (v) => { ev.venue = v; }));
+          grid.appendChild(field('Address', ev.address, (v) => { ev.address = v; }));
+          grid.appendChild(field('Maps URL', ev.mapsUrl, (v) => { ev.mapsUrl = v; }));
+          grid.appendChild(field('Dress code', ev.dressCode, (v) => { ev.dressCode = v; }));
+          row.appendChild(grid);
+          row.appendChild(field('Description', ev.description, (v) => { ev.description = v; }, { type: 'textarea' }));
+          row.appendChild(ce('button', { class: 'btn small danger', onclick: () => { draft.events.splice(i, 1); renderEvents(); } }, ['Remove']));
+          evList.appendChild(row);
+        });
+      }
+      renderEvents();
+      eventsCard.appendChild(evList);
+      eventsCard.appendChild(ce('button', { class: 'btn small ghost', onclick: () => {
+        draft.events.push({ id: 'e' + Date.now(), name: '', dateLabel: '', dateISO: '', timeLabel: '', venue: '', address: '', mapsUrl: '', description: '', dressCode: '' });
+        renderEvents();
+      }}, ['+ Add sub-event']));
+
+      // ── Save bar ──────────────────────────────────────────────────────
+      const saveBar = ce('div', { class: 'card', style: 'position:sticky; bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:12px;' });
+      const saveBtn = ce('button', { class: 'btn' }, ['Save changes']);
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        status.textContent = 'Saving…';
+        try {
+          await api('/api/config', { method: 'PUT', body: { config: {
+            event: draft.event, events: draft.events, hosts: draft.hosts,
+            copy: draft.copy, features: draft.features, theme: draft.theme,
+          } } });
+          await loadBootstrap();
+          renderTabs();
+          status.textContent = 'Saved. The invite page will reflect changes on reload.';
+        } catch (e) {
+          status.textContent = 'Save failed: ' + e.message;
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+      const previewLink = ce('a', { class: 'btn ghost', href: '/invite.html', target: '_blank' }, ['Preview invite ↗']);
+      saveBar.appendChild(status);
+      saveBar.appendChild(ce('div', { class: 'row' }, [previewLink, saveBtn]));
+
+      host.appendChild(identity);
+      host.appendChild(copyCard);
+      host.appendChild(hostsCard);
+      host.appendChild(eventsCard);
+      host.appendChild(featCard);
+      host.appendChild(themeCard);
+      host.appendChild(saveBar);
+    }
+
     function renderExportsTab(host) {
       const card = ce('div', { class: 'card' });
       card.appendChild(ce('h2', { text: 'Exports & Backup' }));
