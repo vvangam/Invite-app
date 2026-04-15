@@ -266,6 +266,7 @@
     .bulk-bar .count { font-weight: 600; }
     .bulk-bar .spacer { flex: 1 1 auto; }
     .bulk-bar select { height: 32px; border:1px solid var(--border); border-radius: var(--radiusSm); padding: 0 8px; background: var(--surface); font: inherit; }
+    .bulk-bar progress { flex: 1 1 200px; height: 10px; accent-color: var(--accent); }
     .guest-cards { display: none; flex-direction: column; gap: 10px; }
     .guest-card {
       background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -1068,15 +1069,65 @@
               await bulkApply('delete', undefined, `${selection.size} guests deleted`);
             }}, ['Delete']);
             const clearBtn = ce('button', { class: 'btn small ghost', onclick: () => { selection.clear(); renderRows(); } }, ['Clear']);
+            // Bulk email send — shows only when the server has the email
+            // channel configured. Skips selected guests without an email
+            // address; reports count at the end.
+            const sendEmailBtn = canSendEmail()
+              ? ce('button', { class: 'btn small', onclick: () => bulkSendEmail('invite') }, ['Send email'])
+              : null;
             bulkBarEl.appendChild(rsvpAction);
             bulkBarEl.appendChild(invAction);
             bulkBarEl.appendChild(groupAction);
             bulkBarEl.appendChild(linkBtn);
             if (unlinkBtn) bulkBarEl.appendChild(unlinkBtn);
+            if (sendEmailBtn) bulkBarEl.appendChild(sendEmailBtn);
             bulkBarEl.appendChild(ce('span', { class: 'spacer' }));
             bulkBarEl.appendChild(clearBtn);
             bulkBarEl.appendChild(delBtn);
             listCard.appendChild(bulkBarEl);
+          }
+
+          // Bulk email sender: iterate one-at-a-time (so a failure shows up
+          // immediately and we don't get rate-limited by Resend), update a
+          // <progress> bar as we go, and summarize at the end. Server-side
+          // each send sets invite_status='Sent' on success.
+          async function bulkSendEmail(template) {
+            const eligible = STATE.guests.filter(g => selection.has(g.id) && (g.emailAddress || '').trim());
+            const skipped = selection.size - eligible.length;
+            if (!eligible.length) {
+              toast(`None of the selected guests have an email address${skipped ? ' (' + skipped + ' skipped)' : ''}.`, 'error', 6000);
+              return;
+            }
+            const prompt = skipped
+              ? `Send email to ${eligible.length} guest${eligible.length === 1 ? '' : 's'}? (${skipped} without email will be skipped.)`
+              : `Send email to ${eligible.length} guest${eligible.length === 1 ? '' : 's'}?`;
+            if (!confirm(prompt)) return;
+
+            // Replace the bulk bar with a progress UI for the duration of
+            // the run. Re-rendering the list at the end recreates the bar.
+            if (bulkBarEl) {
+              bulkBarEl.innerHTML = '';
+              const label = ce('span', { class: 'count', text: `Sending 0 / ${eligible.length}` });
+              const bar = ce('progress', { max: String(eligible.length), value: '0' });
+              bulkBarEl.appendChild(label);
+              bulkBarEl.appendChild(bar);
+              let ok = 0, fail = 0;
+              for (let i = 0; i < eligible.length; i++) {
+                try {
+                  await api('/api/send-invite', { method: 'POST', body: { guestId: eligible[i].id, channel: 'email', template } });
+                  ok++;
+                } catch { fail++; }
+                bar.value = String(i + 1);
+                label.textContent = `Sending ${i + 1} / ${eligible.length}`;
+              }
+              const msg = `Sent ${ok} email${ok === 1 ? '' : 's'}` +
+                (fail ? `, ${fail} failed` : '') +
+                (skipped ? `, ${skipped} skipped (no email)` : '') + '.';
+              toast(msg, fail ? 'error' : 'success', 6000);
+              selection.clear();
+              refreshGuests();
+              refreshStats();
+            }
           }
 
           async function bulkApply(action, value, successMsg) {
