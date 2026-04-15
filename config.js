@@ -413,8 +413,12 @@ module.exports = {
 
   // ── Rate limits (public endpoints) ──────────────────────────────────────
   rateLimits: {
-    publicRsvpPerMin: 20,
+    publicRsvpPerMin:  20,
     validatePinPerMin: 5,
+    // View-tracking beacon — generous cap because reloads / previews /
+    // flaky networks can stack. It exists only to stop a single IP from
+    // spamming the rsvp_events table.
+    trackViewPerMin:   60,
   },
 
   // ── Defaults ─────────────────────────────────────────────────────────────

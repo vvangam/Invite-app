@@ -958,6 +958,23 @@
       });
     }
 
+    // Fire-and-forget view beacon. Uses sendBeacon when available so the
+    // request survives the tab closing / navigating away immediately after
+    // landing; falls back to fetch for browsers that don't. Silent on
+    // failure — telemetry is not allowed to block or error the UI.
+    function sendViewBeacon() {
+      try {
+        const token = getToken();
+        const payload = JSON.stringify(token ? { token } : {});
+        const url = '/api/track-view';
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+        } else {
+          fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});
+        }
+      } catch {}
+    }
+
     async function boot() {
       const app = qs('#app');
       const payload = await fetchPayload();
@@ -969,6 +986,10 @@
         ]));
         return;
       }
+      // Log one view per page load — server distinguishes personal
+      // (matched token) from anonymous (no/unknown token) and only
+      // records when features.viewAnalytics is on.
+      if (payload.features && payload.features.viewAnalytics) sendViewBeacon();
 
       applyPreset(payload.theme);
       if (payload.features && payload.features.darkMode) {

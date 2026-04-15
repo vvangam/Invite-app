@@ -868,7 +868,9 @@ app.get('/api/public-invite', async (req, res) => {
       );
       if (row) {
         guest = guestToFrontend(row);
-        await logRsvpEvent(row.id, 'viewed', req);
+        // View logging moved to the POST /api/track-view beacon so the
+        // count reflects real page loads, not incidental payload fetches
+        // (admin preview iframe, polling, etc.).
       }
     }
 
@@ -905,6 +907,31 @@ async function loadAssetsByRole() {
   }
   return { byRole, byHost, all: rows.map(assetToPublic) };
 }
+
+// View-tracking beacon. Fires once per page load from invite.html. Records
+// an anonymous view (guest_id=null) if no token is present or the token
+// doesn't match, otherwise attributes the view to the guest. Rate-limited
+// per IP so a reload-happy user can't spam the table.
+app.post('/api/track-view', rateLimit(CONFIG.rateLimits.trackViewPerMin || 60), async (req, res) => {
+  try {
+    if (!CONFIG.features.viewAnalytics) return res.json({ ok: true, skipped: true });
+    const token = String((req.body && req.body.token) || '').trim();
+    let guestId = null;
+    if (token) {
+      const row = await dbGet(
+        `SELECT id FROM guests WHERE invite_token=?`,
+        `SELECT id FROM guests WHERE invite_token=$1`,
+        [token]
+      );
+      if (row) guestId = row.id;
+    }
+    await logRsvpEvent(guestId, 'viewed', req);
+    res.json({ ok: true });
+  } catch (e) {
+    // Never break the client page over a telemetry failure.
+    res.status(200).json({ ok: false, error: e.message });
+  }
+});
 
 // Public RSVP (rate-limited). Accepts new or existing invite token.
 app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req, res) => {
@@ -1493,11 +1520,14 @@ app.get('/api/stats', requireAuth, async (_req, res) => {
     const notSent   = await dbGet(`SELECT COUNT(*) as c FROM guests WHERE invite_status='Not Sent'`);
     const totalSeats = await dbGet(`SELECT SUM(party_size) as c FROM guests`);
     const attendingSeats = await dbGet(`SELECT SUM(COALESCE(confirmed_party_size, party_size)) as c FROM guests WHERE rsvp='Attending'`);
-    let views = 0, submissions = 0;
+    let views = 0, viewsPersonal = 0, viewsAnonymous = 0, submissions = 0;
     if (CONFIG.features.viewAnalytics) {
-      const v = await dbGet(`SELECT COUNT(*) as c FROM rsvp_events WHERE action='viewed'`);
+      const vPersonal  = await dbGet(`SELECT COUNT(*) as c FROM rsvp_events WHERE action='viewed' AND guest_id IS NOT NULL`);
+      const vAnonymous = await dbGet(`SELECT COUNT(*) as c FROM rsvp_events WHERE action='viewed' AND guest_id IS NULL`);
       const s = await dbGet(`SELECT COUNT(*) as c FROM rsvp_events WHERE action='submitted'`);
-      views = Number(v?.c || 0);
+      viewsPersonal  = Number(vPersonal?.c || 0);
+      viewsAnonymous = Number(vAnonymous?.c || 0);
+      views = viewsPersonal + viewsAnonymous;
       submissions = Number(s?.c || 0);
     }
     res.json({
@@ -1510,6 +1540,8 @@ app.get('/api/stats', requireAuth, async (_req, res) => {
       totalSeats: Number(totalSeats?.c || 0),
       attendingSeats: Number(attendingSeats?.c || 0),
       views,
+      viewsPersonal,
+      viewsAnonymous,
       submissions,
     });
   } catch (e) {

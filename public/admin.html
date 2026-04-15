@@ -692,7 +692,13 @@
           [
             ['Guests', s.total], ['Attending', s.attending], ['Pending', s.pending], ['Declined', s.declined],
             ['Seats (est.)', s.totalSeats], ['Seats attending', s.attendingSeats],
-            ...(STATE.features.viewAnalytics ? [['Views', s.views], ['Submissions', s.submissions]] : []),
+            // Split so the admin sees how many views came from sharing the
+            // base URL (anonymous) vs. a personal invite link (attributed).
+            ...(STATE.features.viewAnalytics ? [
+              ['Personal views', s.viewsPersonal ?? s.views ?? 0],
+              ['Anonymous views', s.viewsAnonymous ?? 0],
+              ['Submissions', s.submissions],
+            ] : []),
           ].forEach(([l, n]) => statGrid.appendChild(ce('div', { class: 'stat' }, [ce('div', { class: 'n', text: String(n ?? '') }), ce('div', { class: 'l', text: l })])));
         } catch (e) { /* ignore */ }
       }
