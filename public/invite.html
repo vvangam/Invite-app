@@ -721,6 +721,27 @@
       return card;
     }
 
+    // Main-page Gallery: any role='gallery' assets without an event_id.
+    // Per-event galleries continue to render inside their own event card via
+    // assetsForEvent(); this is the "general / save-the-moments" strip that
+    // shows up regardless of how many sub-events exist. Hidden when empty
+    // (golden rule).
+    function renderGallery(payload, copy) {
+      const all = (payload.assets && payload.assets.byRole && payload.assets.byRole.gallery) || [];
+      const items = all.filter(a => !a.eventId);
+      if (!items.length) return null;
+      const card = ce('section', { class: 'card reveal' });
+      card.appendChild(ce('h2', { text: copy.galleryHeader || 'Gallery' }));
+      const strip = ce('div', { class: 'event-gallery' });
+      for (const g of items) {
+        strip.appendChild(ce('a', { href: `/api/asset/${g.id}/full`, target: '_blank', rel: 'noopener' }, [
+          ce('img', { src: `/api/asset/${g.id}/thumb`, alt: g.filename || '', loading: 'lazy' }),
+        ]));
+      }
+      card.appendChild(strip);
+      return card;
+    }
+
     function renderHosts(hosts, copy) {
       if (!hosts || !hosts.length) return null;
       // Accept any of the historical shapes — Settings uses {id,label,slug}
@@ -1122,6 +1143,7 @@
       const hostsSection      = renderHosts(payload.hosts, payload.copy);
       const eventsSection     = renderTimeline(visibleEvents, payload.copy, payload.features, payload)
                              || renderEvents(visibleEvents, payload.copy, payload.features, payload);
+      const gallerySection    = renderGallery(payload, payload.copy);
       const travelSection     = renderTravel(payload.event, payload.copy);
       const faqSection        = renderFaq(payload.event, payload.copy);
       const registriesSection = renderRegistries(payload.event, payload.copy);
@@ -1130,7 +1152,7 @@
       const contactSection    = renderContact(payload.event, payload.copy);
 
       const parts = [
-        hostsSection, detailsSection, eventsSection, travelSection,
+        hostsSection, detailsSection, eventsSection, gallerySection, travelSection,
         faqSection, registriesSection, rsvpSection, shareSection, contactSection,
       ].filter(Boolean);
       for (const p of parts) app.appendChild(p);
@@ -1146,6 +1168,7 @@
         { id: 'hosts',      label: payload.copy.hostsHeader   || 'Hosted By',                   el: hostsSection },
         { id: 'details',    label: payload.copy.detailsHeader || 'Details',                     el: detailsSection },
         { id: 'events',     label: payload.copy.eventsHeader  || 'Events',                      el: eventsSection },
+        { id: 'gallery',    label: payload.copy.galleryHeader || 'Gallery',                     el: gallerySection },
         { id: 'travel',     label: payload.copy.travelHeader  || 'Travel',                      el: travelSection },
         { id: 'faq',        label: payload.copy.faqHeader     || 'FAQ',                         el: faqSection },
         { id: 'registries', label: payload.copy.registriesHeader || 'Gifts',                    el: registriesSection },

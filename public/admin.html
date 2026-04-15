@@ -493,7 +493,7 @@
 
     function buildUploadZone() {
       const zone = ce('div', { class: 'upload-zone' });
-      const msg = ce('p', { class: 'muted', text: 'Drop a file here, or click to choose. Pick an event to attach this image to a specific ceremony.' });
+      const msg = ce('p', { class: 'muted', text: 'Drop files here, or click to choose. Roles: hero (top of invite), background (page bg), gallery (Gallery section / per-event strip). Untagged uploads stay hidden.' });
       const input = ce('input', { type: 'file', multiple: 'multiple', accept: 'application/pdf,image/jpeg,image/png,image/webp,video/mp4', style: 'display:none' });
       // Lead with an explicit untagged option so a fresh upload doesn't
       // silently inherit the first role in the list (which used to be 'hero',

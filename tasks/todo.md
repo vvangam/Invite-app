@@ -220,9 +220,17 @@ guests without WhatsApp. Add channels + reminders.
 
 ## Phase 7 — Photo gallery (1 day)
 
-- [ ] **`gallery` asset role** — uploaded assets tagged `gallery` are
-  rendered as a horizontal scroll/lightbox section between Hero and
-  Details on the invite. Order via drag-handle in admin.
+- [x] **`gallery` asset role** — `assetRoles` includes `'gallery'`. Multi-image
+  upload supported via `<input multiple>`; default upload role is `(untagged)`
+  for safety. Per-event galleries render inside event cards via
+  `assetsForEvent()`. Main-event gallery (eventId='') renders in a top-level
+  Gallery section between Events and Travel via `renderGallery()`. Section
+  nav entry added when present. Untagged uploads stay hidden by design;
+  upload-zone hint copy spells out role visibility.
+- [ ] **Lightbox** — current behaviour opens full image in a new tab.
+  Inline lightbox (zoom, prev/next) is the next polish.
+- [ ] **Drag-reorder** — `sort_order` column already exists; expose a
+  drag-handle in the admin Assets tab.
 
 ## Phase 8 — Internationalization & timezone (1.5 days; defer if scope-cap)
 

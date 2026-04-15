@@ -152,6 +152,7 @@ module.exports = {
     travelTransport:    'Transport',
     travelAccess:       'Accessibility',
     faqHeader:          'FAQ',
+    galleryHeader:      'Gallery',
     registriesHeader:   'Gifts',
     registryView:       'View',
     adminTitle:         'Event Admin',
