@@ -539,6 +539,78 @@ setInterval(() => {
 // ── App setup ───────────────────────────────────────────────────────────────
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '2mb' }));
+
+// ── Invite SSR: inject OG meta into /invite.html ───────────────────────────
+// Link-preview scrapers (WhatsApp, iMessage, Slack, Discord, FB) don't run
+// JS. They need real <meta og:*> tags in the HTML response. We read the
+// static file once at boot, then replace the <!--OG-META--> sentinel with
+// per-request tags derived from the merged config + hero asset.
+const INVITE_HTML_PATH = path.join(__dirname, 'public', 'invite.html');
+let inviteHtmlTemplate = '';
+try {
+  inviteHtmlTemplate = fs.readFileSync(INVITE_HTML_PATH, 'utf8');
+} catch (e) {
+  console.error('Failed to read invite.html template:', e.message);
+}
+
+function absUrl(req, pathname) {
+  const base = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+  if (base) return `${base}${pathname}`;
+  const proto = (req.headers['x-forwarded-proto']) || req.protocol || 'https';
+  const host  = req.headers.host || 'localhost';
+  return `${proto}://${host}${pathname}`;
+}
+
+async function renderInviteHtml(req) {
+  if (!inviteHtmlTemplate) inviteHtmlTemplate = fs.readFileSync(INVITE_HTML_PATH, 'utf8');
+  let cfg = {};
+  try { cfg = await mergedConfig(); } catch {}
+  const event = cfg.event || {};
+  const copy  = cfg.copy  || {};
+  const title = event.title || copy.appName || 'Invitation';
+  // Description priority: event.subtitle → copy.heroSubtitle → a safe default.
+  const descRaw = event.subtitle || copy.heroSubtitle || `You're invited. RSVP here.`;
+  // Resolve hero image for og:image. Videos are skipped (previews need an
+  // image URL, not a stream); PDF and image heroes both carry an `og`
+  // variant from the sharp pipeline. Falls back to null → og:image omitted.
+  let ogImagePath = null;
+  try {
+    const byRole = (await loadAssetsByRole()).byRole || {};
+    const heroList = byRole.hero || [];
+    const hero = heroList.find(a => !String(a.mime || '').startsWith('video/'));
+    if (hero) ogImagePath = hero.ogUrl || hero.url;
+  } catch {}
+  const canonicalPath = req.originalUrl && req.originalUrl !== '/' ? req.originalUrl : '/invite.html';
+  const canonical = absUrl(req, canonicalPath);
+  const tags = [
+    `<meta property="og:type" content="website"/>`,
+    `<meta property="og:title" content="${escapeHtml(title)}"/>`,
+    `<meta property="og:description" content="${escapeHtml(descRaw)}"/>`,
+    `<meta property="og:url" content="${escapeHtml(canonical)}"/>`,
+    ogImagePath ? `<meta property="og:image" content="${escapeHtml(absUrl(req, ogImagePath))}"/>` : '',
+    ogImagePath ? `<meta property="og:image:width" content="1200"/>` : '',
+    ogImagePath ? `<meta property="og:image:height" content="630"/>` : '',
+    `<meta name="twitter:card" content="${ogImagePath ? 'summary_large_image' : 'summary'}"/>`,
+    `<meta name="twitter:title" content="${escapeHtml(title)}"/>`,
+    `<meta name="twitter:description" content="${escapeHtml(descRaw)}"/>`,
+    ogImagePath ? `<meta name="twitter:image" content="${escapeHtml(absUrl(req, ogImagePath))}"/>` : '',
+    `<meta name="description" content="${escapeHtml(descRaw)}"/>`,
+  ].filter(Boolean).join('\n  ');
+  return inviteHtmlTemplate.replace('<!--OG-META-->', tags);
+}
+
+app.get('/invite.html', async (req, res, next) => {
+  try {
+    const html = await renderInviteHtml(req);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    res.send(html);
+  } catch (e) {
+    // Fall through to express.static on error so the raw file still works.
+    next(e);
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: '7d',
   setHeaders(res, filePath) {
