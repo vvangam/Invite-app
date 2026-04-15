@@ -269,6 +269,67 @@ async function logRsvpEvent(guestId, action, req) {
   );
 }
 
+// ── Messaging: template rendering + email channel (Resend) ─────────────────
+
+// Render a {{token}} template against a vars bag. Tokens not present in vars
+// collapse to empty string. Shared by WhatsApp + email render paths so
+// message content stays in sync across channels.
+function renderTemplate(tpl, vars) {
+  return String(tpl || '').replace(/\{\{(\w+)\}\}/g, (_, k) => {
+    const v = vars[k];
+    return v == null ? '' : String(v);
+  });
+}
+
+// Build the public invite URL for a guest — used as the link token across
+// every outbound message. PUBLIC_URL env wins; else derive from request.
+function inviteUrlFor(token, req) {
+  const publicBase = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+  if (publicBase) return `${publicBase}/i/${token}`;
+  const proto = (req && req.headers && req.headers['x-forwarded-proto']) || (req && req.protocol) || 'https';
+  const host  = (req && req.headers && req.headers.host) || 'localhost';
+  return `${proto}://${host}/i/${token}`;
+}
+
+// True when the email channel is configured with working credentials. We
+// gate the channel on two env vars: the API key and the verified sender.
+function emailChannelEnabled() {
+  return Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
+}
+
+// Minimal Resend wrapper — no SDK; Resend is a plain JSON POST. Throws on
+// non-2xx so callers can surface an error to the admin. `html` is optional;
+// if omitted, the plain-text body is wrapped in a <pre>-style block.
+async function sendEmailViaResend({ to, subject, text, html, replyTo }) {
+  if (!emailChannelEnabled()) throw new Error('Email channel not configured (set RESEND_API_KEY + RESEND_FROM_EMAIL)');
+  const from = process.env.RESEND_FROM_EMAIL;
+  const payload = { from, to: Array.isArray(to) ? to : [to], subject, text };
+  if (html) payload.html = html;
+  if (replyTo) payload.reply_to = replyTo;
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`Resend error ${r.status}: ${body.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+// Wrap plain text into a minimal, safe HTML email body. Keeps the same
+// content as the text/plain part — no tracking pixels, no branding.
+function textToHtml(text) {
+  const escaped = String(text || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  // Linkify any http(s) URL so the invite link is clickable in Gmail/Outlook.
+  const linked = escaped.replace(/(https?:\/\/[^\s<]+)/g, (u) => `<a href="${u}">${u}</a>`);
+  return `<div style="font-family:system-ui,sans-serif;line-height:1.55;color:#222;max-width:560px;white-space:pre-wrap">${linked}</div>`;
+}
+
 // ── Auth (DB-backed sessions, persist across restarts) ──────────────────────
 async function isValidSession(token) {
   if (!token) return false;
@@ -615,11 +676,14 @@ app.get('/api/bootstrap', async (_req, res) => {
   try {
     const cfg   = await mergedConfig();
     const theme = resolveTheme(cfg);
+    // The email channel flag is *computed* (env-gated) regardless of what
+    // the stored config says, so the admin UI reflects reality.
+    const features = { ...cfg.features, emailChannel: emailChannelEnabled() };
     res.json({
       ok: true,
       appVersion: cfg.appVersion,
       copy:       cfg.copy,
-      features:   cfg.features,
+      features,
       theme,
       requiresPin: Boolean(cfg.pin),
       assetRoles: cfg.assetRoles,
@@ -1220,6 +1284,69 @@ app.post('/api/guests/bulk', requireAuth, async (req, res) => {
       params
     );
     res.json({ ok: true, updated: cleanIds.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Send an invite (or reminder) to one guest via the chosen channel. Updates
+// invite_status to 'Sent' on success so the admin list reflects reality.
+// Body: { guestId, channel: 'email'|'whatsapp', template: 'invite'|'reminder' }
+// 'whatsapp' simply returns the pre-built wa.me URL (link-based channel —
+// the browser opens it in a new tab), keeping one endpoint for both flows.
+app.post('/api/send-invite', requireAuth, async (req, res) => {
+  const { guestId, channel = 'email', template = 'invite' } = req.body || {};
+  const id = Number(guestId);
+  if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: 'guestId required' });
+  if (!['email', 'whatsapp'].includes(channel)) return res.status(400).json({ ok: false, error: 'bad channel' });
+  if (!['invite', 'reminder'].includes(template)) return res.status(400).json({ ok: false, error: 'bad template' });
+  try {
+    const guest = await dbGet(
+      `SELECT * FROM guests WHERE id=?`,
+      `SELECT * FROM guests WHERE id=$1`,
+      [id]
+    );
+    if (!guest) return res.status(404).json({ ok: false, error: 'Guest not found' });
+    const cfg = await mergedConfig();
+    const token = guest.invite_token || await ensureInviteTokenForGuest(id);
+    const url = inviteUrlFor(token, req);
+    const vars = {
+      name:          guest.guest_name || '',
+      eventTitle:    (cfg.event && cfg.event.title) || '',
+      eventDate:     (cfg.event && cfg.event.dateLabel) ? ` on ${cfg.event.dateLabel}` : '',
+      inviteUrl:     url,
+      rsvpDeadline:  (cfg.event && cfg.event.rsvpDeadline) || '',
+    };
+    const msgCfg = cfg.messaging || {};
+    const tplKey = template === 'reminder' ? 'reminderTemplate' : 'inviteTemplate';
+    const bodyText = renderTemplate(msgCfg[tplKey] || '', vars);
+
+    if (channel === 'whatsapp') {
+      const phone = String(guest.mobile_number || '').replace(/[^0-9]/g, '');
+      if (!phone) return res.status(400).json({ ok: false, error: 'No phone number on record' });
+      const waLink = `https://wa.me/${phone}?text=${encodeURIComponent(bodyText)}`;
+      // Leave invite_status untouched for WhatsApp — the admin clicks the
+      // link in a new tab, and we can't confirm delivery. The UI already
+      // handles this with a separate "mark sent" action.
+      return res.json({ ok: true, channel, url: waLink });
+    }
+
+    // Email path.
+    if (!emailChannelEnabled()) {
+      return res.status(503).json({ ok: false, error: 'Email channel not configured on server' });
+    }
+    const to = String(guest.email_address || '').trim();
+    if (!to) return res.status(400).json({ ok: false, error: 'No email address on record' });
+    const subjKey = template === 'reminder' ? 'emailReminderSubject' : 'emailInviteSubject';
+    const subject = renderTemplate(msgCfg[subjKey] || vars.eventTitle || 'Invitation', vars);
+    await sendEmailViaResend({ to, subject, text: bodyText, html: textToHtml(bodyText) });
+    await dbRun(
+      `UPDATE guests SET invite_status='Sent', invite_sent_date=? WHERE id=?`,
+      `UPDATE guests SET invite_status='Sent', invite_sent_date=$1 WHERE id=$2`,
+      [new Date().toISOString(), id]
+    );
+    await logRsvpEvent(id, template === 'reminder' ? 'reminder_sent' : 'invite_sent', req);
+    res.json({ ok: true, channel, to });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

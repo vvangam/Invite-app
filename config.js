@@ -111,6 +111,18 @@ module.exports = {
     viewAnalytics:  true,
     darkMode:       true,
     videoUpload:    true,
+    // Enabled at runtime when RESEND_API_KEY + RESEND_FROM_EMAIL are set.
+    // The bootstrap endpoint reflects the effective value so the admin UI
+    // can hide email-send buttons cleanly. Overriding to true here without
+    // the env vars is a silent no-op — the server still requires both.
+    emailChannel:       false,
+    // Auto-reminders: an in-process scheduler that emails pending guests on
+    // a configurable window before the RSVP deadline. Off by default — opt
+    // in explicitly, because it sends messages without a human in the loop.
+    autoReminders:      false,
+    // Admin notifications: fire-and-forget email to event.contactEmail on
+    // every new RSVP submission. Also off by default.
+    adminNotifications: false,
   },
 
   // ── Copy overrides (every user-facing string) ────────────────────────────
@@ -382,9 +394,21 @@ module.exports = {
   messaging: {
     inviteTemplate:
       'Hi {{name}}, you\u2019re invited to {{eventTitle}}{{eventDate}}. Details & RSVP: {{inviteUrl}}',
-    // Reserved for Phase 5 (scheduled reminders). Not yet wired to a sender.
     reminderTemplate:
       'Hi {{name}}, reminder to RSVP for {{eventTitle}} by {{rsvpDeadline}}: {{inviteUrl}}',
+    // Channel availability. whatsapp is always on (free, link-based, no
+    // server dependency); email is gated on Resend credentials at runtime.
+    channels: {
+      whatsapp: true,
+      email:    false,
+    },
+    // Email-only overrides. Used only when sending via the email channel.
+    // The subject is templated with the same tokens as the body.
+    emailInviteSubject:   'You\u2019re invited: {{eventTitle}}',
+    emailReminderSubject: 'Reminder: please RSVP for {{eventTitle}}',
+    // How many days before rsvpDeadline (or event date) to send reminders.
+    // The scheduler wakes every 6 hours; a window matches once per guest.
+    reminderWindows: [14, 7, 1],
   },
 
   // ── Rate limits (public endpoints) ──────────────────────────────────────

@@ -244,6 +244,12 @@
     }
 
     /* Guest-list filter toolbar + bulk action bar */
+    .post-add {
+      margin-top: 12px; padding: 12px 14px; border-radius: var(--radius);
+      background: color-mix(in srgb, var(--success) 10%, var(--surface));
+      border: 1px solid color-mix(in srgb, var(--success) 35%, var(--border));
+    }
+    .post-add-head strong { color: var(--fg); }
     .guest-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin: 8px 0 12px; }
     .guest-toolbar .search { flex:1 1 220px; min-width: 0; }
     .guest-toolbar select, .guest-toolbar input[type="text"], .guest-toolbar input[type="search"] {
@@ -595,24 +601,80 @@
       form.appendChild(ce('label', { class: 'field' }, ['Segment', inputs.segment]));
       form.appendChild(ce('label', { class: 'field' }, ['Notes', inputs.notes]));
       const submit = ce('button', { class: 'btn', type: 'submit' }, ['Add Guest']);
-      const msg = ce('p', { class: 'muted' });
       form.appendChild(submit);
-      form.appendChild(msg);
+      addCard.appendChild(form);
+
+      // Post-add action panel — appears after a successful add so the admin
+      // can send the invite immediately instead of hunting the guest down
+      // in the list below. Hidden until a guest is added.
+      const postAdd = ce('div', { class: 'post-add hidden' });
+      addCard.appendChild(postAdd);
+
+      function renderPostAdd(guest) {
+        postAdd.innerHTML = '';
+        postAdd.classList.remove('hidden');
+        const link = `${location.origin}/i/${guest.inviteToken}`;
+        postAdd.appendChild(ce('div', { class: 'post-add-head' }, [
+          ce('strong', { text: `✓ Added ${guest.guestName}` }),
+          ce('span', { class: 'muted', text: ' — send their invite now?' }),
+        ]));
+        const row = ce('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-top:8px' });
+        const copyBtn = ce('button', { class: 'btn small ghost', type: 'button', onclick: async () => {
+          try { await navigator.clipboard.writeText(link); copyBtn.textContent = 'Copied ✓'; toast('Invite link copied.', 'success', 1600); }
+          catch { toast('Could not copy — select the link manually.', 'error'); }
+        }}, ['Copy link']);
+        row.appendChild(copyBtn);
+        if (guest.mobileNumber) {
+          const wa = waUrl(guest, link);
+          row.appendChild(ce('a', { class: 'btn small', href: wa, target: '_blank', rel: 'noopener', onclick: async () => {
+            try { await api(`/api/guests/${guest.id}`, { method: 'PUT', body: { field: 'inviteStatus', value: 'Sent' } }); refreshStats(); refreshGuests(); } catch {}
+          }, text: 'WhatsApp' }));
+        }
+        if (guest.emailAddress && canSendEmail()) {
+          const emailBtn = ce('button', { class: 'btn small', type: 'button', onclick: async () => {
+            emailBtn.disabled = true; emailBtn.textContent = 'Sending…';
+            try {
+              await api('/api/send-invite', { method: 'POST', body: { guestId: guest.id, channel: 'email' } });
+              emailBtn.textContent = 'Sent ✓';
+              toast(`Emailed ${guest.guestName}.`, 'success');
+              refreshStats(); refreshGuests();
+            } catch (e) {
+              emailBtn.disabled = false; emailBtn.textContent = 'Email';
+              toast('Email send failed: ' + e.message, 'error', 6000);
+            }
+          }}, ['Email']);
+          row.appendChild(emailBtn);
+        }
+        const doneBtn = ce('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+          postAdd.classList.add('hidden');
+          postAdd.innerHTML = '';
+          inputs.guestName.focus();
+        }}, ['Add another']);
+        row.appendChild(doneBtn);
+        postAdd.appendChild(row);
+      }
+
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        submit.disabled = true; msg.textContent = '';
+        submit.disabled = true;
         try {
           const body = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
-          await api('/api/guests', { method: 'POST', body });
-          toast(`Added ${body.guestName}.`, 'success');
+          const r = await api('/api/guests', { method: 'POST', body });
           for (const el of Object.values(inputs)) if (el.tagName !== 'SELECT') el.value = '';
           inputs.partySize.value = '1';
+          renderPostAdd({
+            id: r.id,
+            inviteToken: r.inviteToken,
+            guestName: body.guestName,
+            mobileNumber: body.mobileNumber,
+            emailAddress: body.emailAddress,
+          });
           refreshGuests();
           refreshStats();
         } catch (err) { toast(err.message || 'Failed to add guest.', 'error', 6000); }
         finally { submit.disabled = false; }
       });
-      addCard.appendChild(form);
+
       host.appendChild(addCard);
 
       const listCard = ce('div', { class: 'card' });
@@ -835,6 +897,7 @@
               });
               const copyBtn = ce('button', { class: 'btn small ghost', onclick: () => navigator.clipboard.writeText(link).then(() => { copyBtn.textContent = 'Copied'; toast('Invite link copied.', 'success', 1600); }) }, ['Copy link']);
               const waBtn = g.mobileNumber ? ce('a', { class: 'btn small ghost', href: waUrl(g, link), target: '_blank', rel: 'noopener', text: 'WhatsApp' }) : null;
+              const emailBtn = (g.emailAddress && canSendEmail()) ? sendEmailButton(g, 'invite') : null;
               const delBtn = ce('button', { class: 'btn small danger', onclick: async () => {
                 if (!confirm(`Delete ${g.guestName}?`)) return;
                 try {
@@ -851,7 +914,7 @@
                 ce('td', { text: `${g.partySize || 1}${g.confirmedPartySize != null ? ` → ${g.confirmedPartySize}` : ''}` }),
                 ce('td', {}, [rsvpSel]),
                 ce('td', {}, [invSel]),
-                ce('td', {}, [ce('div', { class: 'row' }, [copyBtn, waBtn, delBtn].filter(Boolean))]),
+                ce('td', {}, [ce('div', { class: 'row' }, [copyBtn, waBtn, emailBtn, delBtn].filter(Boolean))]),
               ]));
             }
 
@@ -888,6 +951,7 @@
               });
               const copyBtn = ce('button', { class: 'btn small ghost', onclick: () => navigator.clipboard.writeText(link).then(() => toast('Invite link copied.', 'success', 1600)) }, ['Copy link']);
               const waBtn = g.mobileNumber ? ce('a', { class: 'btn small ghost', href: waUrl(g, link), target: '_blank', rel: 'noopener', text: 'WhatsApp' }) : null;
+              const emailBtn = (g.emailAddress && canSendEmail()) ? sendEmailButton(g, 'invite') : null;
               const delBtn = ce('button', { class: 'btn small danger', onclick: async () => {
                 if (!confirm(`Delete ${g.guestName}?`)) return;
                 try { await api(`/api/guests/${g.id}`, { method: 'DELETE' }); refreshGuests(); refreshStats(); }
@@ -906,7 +970,7 @@
                   ce('label', { class: 'field' }, [ce('span', { class: 'muted', style: 'font-size:.8em', text: 'RSVP' }), rsvpSel]),
                   ce('label', { class: 'field' }, [ce('span', { class: 'muted', style: 'font-size:.8em', text: 'Invite' }), invSel]),
                 ]),
-                ce('div', { class: 'actions' }, [copyBtn, waBtn, delBtn].filter(Boolean)),
+                ce('div', { class: 'actions' }, [copyBtn, waBtn, emailBtn, delBtn].filter(Boolean)),
               ]));
             }
 
@@ -1036,6 +1100,36 @@
 
       refreshStats();
       refreshGuests();
+    }
+
+    // Whether the server has the email channel available. Driven by the
+    // bootstrap payload — server populates `features.emailChannel` based on
+    // presence of RESEND_API_KEY + RESEND_FROM_EMAIL env.
+    function canSendEmail() {
+      return !!(STATE.features && STATE.features.emailChannel);
+    }
+
+    // Shared email-send button factory. Handles the POST, in-flight state,
+    // success/error toasts, and post-send list refresh. `template` is either
+    // 'invite' or 'reminder'.
+    function sendEmailButton(guest, template) {
+      const btn = ce('button', { class: 'btn small ghost', type: 'button' }, ['Email']);
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Sending…';
+        try {
+          await api('/api/send-invite', { method: 'POST', body: { guestId: guest.id, channel: 'email', template } });
+          btn.textContent = 'Sent ✓';
+          toast(`Emailed ${guest.guestName}.`, 'success');
+          if (typeof refreshStats === 'function') refreshStats();
+        } catch (e) {
+          btn.textContent = original;
+          btn.disabled = false;
+          toast('Email failed: ' + e.message, 'error', 6000);
+        }
+      });
+      return btn;
     }
 
     function waUrl(g, inviteUrl) {
