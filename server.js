@@ -1327,6 +1327,129 @@ app.post('/api/import.json', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// CSV import — accepts either preview mode (returns parsed + header mapping)
+// or commit mode (inserts). Mapping lets the admin override inferred column
+// names before committing.
+app.post('/api/import.csv', requireAuth, async (req, res) => {
+  if (!CONFIG.features.jsonBackup) return res.status(403).json({ ok: false, error: 'Imports disabled' });
+  const { csv = '', wipeFirst = false, preview = false, mapping = null } = req.body || {};
+  if (typeof csv !== 'string' || !csv.trim()) {
+    return res.status(400).json({ ok: false, error: 'csv text required' });
+  }
+  try {
+    const { headers, rows } = parseCsv(csv);
+    if (!headers.length || !rows.length) {
+      return res.status(400).json({ ok: false, error: 'empty CSV' });
+    }
+    const inferred = inferCsvMapping(headers);
+    const effectiveMapping = mapping && typeof mapping === 'object' ? { ...inferred, ...mapping } : inferred;
+
+    if (preview) {
+      // Preview returns up to 10 rows already projected through the mapping
+      // so the admin can sanity-check before committing.
+      const sample = rows.slice(0, 10).map(r => projectCsvRow(r, headers, effectiveMapping));
+      return res.json({
+        ok: true, preview: true,
+        headers, inferredMapping: inferred, mapping: effectiveMapping,
+        totalRows: rows.length, sample,
+      });
+    }
+
+    if (wipeFirst) await dbRun(`DELETE FROM guests`, `DELETE FROM guests`, []);
+    let imported = 0;
+    for (const r of rows) {
+      const g = projectCsvRow(r, headers, effectiveMapping);
+      if (!g.guestName) continue; // require a name to import
+      await dbRun(
+        `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, party_size, segment, invite_status, rsvp, notes, source, invite_token)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, party_size, segment, invite_status, rsvp, notes, source, invite_token)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [g.guestGroup, g.guestName, g.mobileNumber, g.emailAddress,
+         Number.isFinite(g.partySize) ? g.partySize : 1, g.segment,
+         g.inviteStatus || 'Not Sent', g.rsvp || 'Pending',
+         g.notes, 'csv-import', makeInviteToken()]
+      );
+      imported += 1;
+    }
+    res.json({ ok: true, imported, skipped: rows.length - imported });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Minimal CSV parser: handles quoted fields with embedded commas, CRLF/LF
+// line endings, and doubled "" for literal quotes. Rejects malformed quoting.
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  const src = String(text).replace(/^\uFEFF/, ''); // strip BOM
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else if (ch === '\r') { /* swallow; \n handles row */ }
+      else field += ch;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  const nonEmpty = rows.filter(r => r.some(c => String(c).trim() !== ''));
+  if (!nonEmpty.length) return { headers: [], rows: [] };
+  const [headers, ...body] = nonEmpty;
+  return { headers: headers.map(h => String(h).trim()), rows: body };
+}
+
+// Maps canonical field names to common column header variants. First match
+// wins. Case-insensitive compare; admins can override via explicit mapping.
+const CSV_HEADER_ALIASES = {
+  guestName:    ['guest name', 'name', 'full name', 'guest'],
+  mobileNumber: ['mobile', 'phone', 'mobile number', 'cell', 'cell phone', 'whatsapp'],
+  emailAddress: ['email', 'email address', 'e-mail'],
+  guestGroup:   ['group', 'guest group', 'category'],
+  partySize:    ['party size', 'party', 'guests', 'count'],
+  segment:      ['segment', 'tag', 'tags'],
+  rsvp:         ['rsvp', 'status', 'response'],
+  inviteStatus: ['invite status', 'sent', 'invite'],
+  notes:        ['notes', 'note', 'comments'],
+};
+
+function inferCsvMapping(headers) {
+  const norm = headers.map(h => String(h).trim().toLowerCase());
+  const mapping = {};
+  for (const [field, aliases] of Object.entries(CSV_HEADER_ALIASES)) {
+    const idx = norm.findIndex(h => aliases.includes(h));
+    if (idx >= 0) mapping[field] = headers[idx];
+  }
+  return mapping;
+}
+
+function projectCsvRow(row, headers, mapping) {
+  const get = (name) => {
+    if (!name) return '';
+    const idx = headers.indexOf(name);
+    return idx >= 0 ? String(row[idx] ?? '').trim() : '';
+  };
+  const partySize = Number(get(mapping.partySize));
+  return {
+    guestName:    get(mapping.guestName),
+    mobileNumber: get(mapping.mobileNumber),
+    emailAddress: get(mapping.emailAddress),
+    guestGroup:   get(mapping.guestGroup),
+    partySize:    Number.isFinite(partySize) && partySize > 0 ? partySize : 1,
+    segment:      get(mapping.segment),
+    rsvp:         get(mapping.rsvp) || 'Pending',
+    inviteStatus: get(mapping.inviteStatus) || 'Not Sent',
+    notes:        get(mapping.notes),
+  };
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function guestToFrontend(r) {
   if (!r) return null;

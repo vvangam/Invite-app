@@ -1585,6 +1585,132 @@
       if (STATE.features.jsonBackup) { card.appendChild(wipeLbl); card.appendChild(restoreInput); }
 
       host.appendChild(card);
+
+      // CSV import card — lives next to JSON restore for symmetry. Preview
+      // step shows inferred column mapping with per-field overrides before
+      // committing, so admins can fix weird column names without editing
+      // the CSV file.
+      if (STATE.features.jsonBackup) {
+        const csvCard = ce('div', { class: 'card' });
+        csvCard.appendChild(ce('h2', { text: 'Import from CSV' }));
+        csvCard.appendChild(ce('p', { class: 'muted', text: 'Upload a CSV exported from your spreadsheet. We map common column names (Name / Email / Phone / Group / Party Size / Notes) automatically; you can override any mapping before committing.' }));
+        const csvInput = ce('input', { type: 'file', accept: '.csv,text/csv', style: 'display:none' });
+        const csvBtn = ce('button', { class: 'btn ghost', type: 'button', onclick: () => csvInput.click() }, ['Choose CSV file']);
+        const csvWipeChk = ce('input', { type: 'checkbox' });
+        const csvWipeLbl = ce('label', { class: 'field', style: 'flex-direction:row; align-items:center; gap:6px;' }, [csvWipeChk, ' Wipe existing guests first']);
+        const csvPreviewHost = ce('div');
+        csvCard.appendChild(ce('div', { class: 'row' }, [csvBtn]));
+        csvCard.appendChild(csvWipeLbl);
+        csvCard.appendChild(csvInput);
+        csvCard.appendChild(csvPreviewHost);
+
+        // Canonical fields the CSV is projected into. Order controls the
+        // order of the mapping editor rows.
+        const FIELDS = [
+          ['guestName', 'Name'], ['mobileNumber', 'Mobile'], ['emailAddress', 'Email'],
+          ['guestGroup', 'Group'], ['partySize', 'Party size'], ['segment', 'Segment'],
+          ['rsvp', 'RSVP'], ['inviteStatus', 'Invite status'], ['notes', 'Notes'],
+        ];
+
+        csvInput.addEventListener('change', async () => {
+          const file = csvInput.files[0];
+          if (!file) return;
+          let text;
+          try { text = await file.text(); }
+          catch (e) { toast('Could not read file: ' + e.message, 'error'); csvInput.value = ''; return; }
+          await previewCsv(text);
+        });
+
+        async function previewCsv(csvText) {
+          csvPreviewHost.innerHTML = '';
+          try {
+            const r = await api('/api/import.csv', { method: 'POST', body: { csv: csvText, preview: true } });
+            renderPreview(csvText, r);
+          } catch (e) {
+            toast('Preview failed: ' + e.message, 'error', 6000);
+          }
+        }
+
+        function renderPreview(csvText, r) {
+          csvPreviewHost.innerHTML = '';
+          let mapping = { ...r.mapping };
+          let sample = r.sample;
+          const totalRows = r.totalRows;
+
+          csvPreviewHost.appendChild(ce('h3', { text: `Preview — ${totalRows} rows detected`, style: 'margin-top:16px' }));
+          const mapHost = ce('div', { class: 'grid', style: 'margin: 8px 0 12px;' });
+
+          let refreshTimer = null;
+          function scheduleRefresh() {
+            clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(async () => {
+              try {
+                const fresh = await api('/api/import.csv', { method: 'POST', body: { csv: csvText, preview: true, mapping } });
+                sample = fresh.sample;
+                renderSample();
+              } catch { /* keep old sample; user will see stale until next edit */ }
+            }, 180);
+          }
+
+          for (const [field, label] of FIELDS) {
+            const sel = ce('select', {}, [
+              ce('option', { value: '', text: '(unmapped)' }),
+              ...r.headers.map(h => ce('option', { value: h, selected: mapping[field] === h ? 'selected' : undefined, text: h })),
+            ]);
+            sel.addEventListener('change', () => {
+              if (sel.value) mapping[field] = sel.value;
+              else delete mapping[field];
+              scheduleRefresh();
+            });
+            mapHost.appendChild(ce('label', { class: 'field' }, [label, sel]));
+          }
+          csvPreviewHost.appendChild(mapHost);
+
+          const sampleHost = ce('div', { style: 'overflow-x:auto; margin-bottom: 12px;' });
+          csvPreviewHost.appendChild(sampleHost);
+
+          const commitBtn = ce('button', { class: 'btn', type: 'button' }, [`Import ${totalRows} guests`]);
+          const cancelBtn = ce('button', { class: 'btn ghost', type: 'button', onclick: () => {
+            csvPreviewHost.innerHTML = '';
+            csvInput.value = '';
+          } }, ['Cancel']);
+          csvPreviewHost.appendChild(ce('div', { class: 'row' }, [cancelBtn, commitBtn]));
+
+          commitBtn.addEventListener('click', async () => {
+            if (csvWipeChk.checked && !confirm('This will permanently delete all existing guests before importing. Continue?')) return;
+            commitBtn.disabled = true;
+            commitBtn.textContent = 'Importing…';
+            try {
+              const res = await api('/api/import.csv', {
+                method: 'POST',
+                body: { csv: csvText, mapping, wipeFirst: csvWipeChk.checked },
+              });
+              toast(`Imported ${res.imported} guests${res.skipped ? ` (${res.skipped} skipped — missing name)` : ''}.`, 'success');
+              csvPreviewHost.innerHTML = '';
+              csvInput.value = '';
+            } catch (e) {
+              toast('Import failed: ' + e.message, 'error', 6000);
+              commitBtn.disabled = false;
+              commitBtn.textContent = `Import ${totalRows} guests`;
+            }
+          });
+
+          function renderSample() {
+            sampleHost.innerHTML = '';
+            const table = ce('table');
+            const head = ce('thead');
+            head.appendChild(ce('tr', {}, FIELDS.map(([_, l]) => ce('th', { text: l }))));
+            table.appendChild(head);
+            const body = ce('tbody');
+            for (const row of sample) {
+              body.appendChild(ce('tr', {}, FIELDS.map(([f]) => ce('td', { text: String(row[f] ?? '') }))));
+            }
+            table.appendChild(body);
+            sampleHost.appendChild(table);
+          }
+          renderSample();
+        }
+      }
     }
 
     // ─── Onboarding wizard ────────────────────────────────────────────────

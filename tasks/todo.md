@@ -158,8 +158,13 @@ The admin currently hides the highest-leverage actions behind the
 - [ ] **Household grouping.** New optional `household_id` column. Two
   guests with same household_id render as a single row in the table
   (expand to show members). Reduces visual noise for couples.
-- [ ] **CSV import** — mirror the JSON restore path, accept CSV with
-  flexible column mapping. Stage a preview before commit.
+- [x] **CSV import** — mirrors JSON restore. `POST /api/import.csv`
+  with `preview:true` returns parsed headers + inferred column mapping
+  + up to 10 projected sample rows. Commit step uses admin-overridden
+  mapping. Server-side parser handles quoted fields, doubled-quote
+  escaping, CRLF. Admin UI in Exports tab: file picker → preview
+  with per-field mapping dropdowns → commit with optional wipe-first.
+  Rows missing `guestName` are skipped with a count returned.
 - [x] **Mobile guest table** — collapses to card view at `<640px`
   viewport. Each card shows name/group/phone/email, RSVP + invite
   selects, and Copy/WhatsApp/Delete actions. Selection checkbox in
