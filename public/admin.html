@@ -142,7 +142,31 @@
       background: var(--surface); border:1px solid var(--border); border-radius: var(--radiusLg);
       padding: 14px 18px; display:flex; justify-content:space-between; align-items:center; gap:12px;
       box-shadow: var(--shadow2); margin: 14px 0;
+      transition: border-color var(--motionFast) ease, box-shadow var(--motionBase) ease;
     }
+    .save-bar.is-dirty { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent), var(--shadow2); }
+    .save-bar .meta { color: var(--fgMuted); font-size: .9em; }
+    .save-bar.is-dirty .meta { color: var(--fg); font-weight: 600; }
+
+    /* Toast notifications */
+    #toast-host {
+      position: fixed; right: 18px; bottom: 18px; z-index: 200;
+      display: grid; gap: 10px; pointer-events: none;
+      max-width: min(92vw, 360px);
+    }
+    .toast {
+      pointer-events: auto;
+      background: var(--surface); color: var(--fg);
+      border: 1px solid var(--border); border-left: 4px solid var(--fgMuted);
+      border-radius: var(--radiusSm); box-shadow: var(--shadow2);
+      padding: 12px 14px; font-size: .92em;
+      opacity: 0; transform: translateY(12px);
+      transition: opacity var(--motionBase) ease, transform var(--motionBase) ease;
+    }
+    .toast.show { opacity: 1; transform: none; }
+    .toast.success { border-left-color: var(--success); }
+    .toast.error   { border-left-color: var(--danger); }
+    .toast.info    { border-left-color: var(--accent); }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -164,6 +188,7 @@
   </header>
 
   <main id="main"></main>
+  <div id="toast-host" aria-live="polite" aria-atomic="false"></div>
 
   <div id="pin-overlay" class="hidden">
     <div class="box">
@@ -216,6 +241,25 @@
     }
 
     const qs  = (s, r=document) => r.querySelector(s);
+
+    // Toast: transient notification shown bottom-right. Variant: 'success' | 'error' | 'info'.
+    function toast(message, variant = 'info', duration = 3500) {
+      const host = qs('#toast-host');
+      if (!host || !message) return;
+      const el = document.createElement('div');
+      el.className = `toast ${variant}`;
+      el.setAttribute('role', variant === 'error' ? 'alert' : 'status');
+      el.textContent = String(message);
+      host.appendChild(el);
+      requestAnimationFrame(() => el.classList.add('show'));
+      const close = () => {
+        el.classList.remove('show');
+        setTimeout(() => el.remove(), 300);
+      };
+      const timer = setTimeout(close, duration);
+      el.addEventListener('click', () => { clearTimeout(timer); close(); });
+    }
+
     const ce  = (tag, attrs={}, children=[]) => {
       const el = document.createElement(tag);
       for (const [k,v] of Object.entries(attrs)) {
@@ -338,10 +382,13 @@
         fd.append('hostSlug', hostInput.value.trim().toLowerCase());
         try {
           const res = await api('/api/assets', { method: 'POST', body: fd });
-          status.innerHTML = '';
-          status.appendChild(document.createTextNode(`Uploaded "${res.asset.filename}" as "${res.asset.role || 'untagged'}"`));
+          status.textContent = '';
+          toast(`Uploaded "${res.asset.filename}" as "${res.asset.role || 'untagged'}".`, 'success');
           renderBody();
-        } catch (e) { status.textContent = `Upload failed: ${e.message}`; }
+        } catch (e) {
+          status.textContent = '';
+          toast(`Upload failed: ${e.message}`, 'error', 6000);
+        }
       }
 
       input.addEventListener('change', () => doUpload(input.files[0]));
@@ -444,13 +491,13 @@
         try {
           const body = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
           await api('/api/guests', { method: 'POST', body });
-          msg.textContent = `Added ${body.guestName}.`;
+          toast(`Added ${body.guestName}.`, 'success');
           for (const el of Object.values(inputs)) if (el.tagName !== 'SELECT') el.value = '';
           inputs.partySize.value = '1';
           refreshGuests();
           refreshStats();
-        } catch (err) { msg.textContent = err.message; }
-        submit.disabled = false;
+        } catch (err) { toast(err.message || 'Failed to add guest.', 'error', 6000); }
+        finally { submit.disabled = false; }
       });
       addCard.appendChild(form);
       host.appendChild(addCard);
@@ -618,8 +665,6 @@
       draft.rsvp.fields ||= {};
       draft.rsvp.statusOptions = Array.isArray(draft.rsvp.statusOptions) ? draft.rsvp.statusOptions : ['Attending', 'Maybe', 'Declined'];
       if (!draft.themePresetActive) draft.themePresetActive = (STATE.config.theme && STATE.config.theme.active) || '';
-
-      const status = ce('p', { class: 'form-msg muted', style: 'min-height:1.2em; margin:0;' });
 
       function field(label, value, onInput, opts = {}) {
         const input = ce(opts.type === 'textarea' ? 'textarea' : 'input', {
@@ -1043,12 +1088,45 @@
       }}, ['+ Add segment']));
 
       // ── Save bar ──────────────────────────────────────────────────────
+      // Snapshot serialisation — compared against current draft to detect
+      // unsaved edits. Keep in sync with the PUT payload below.
+      function snapshot(d) {
+        return JSON.stringify({
+          event: d.event, events: d.events, hosts: d.hosts, copy: d.copy,
+          features: d.features, theme: d.theme, rsvp: d.rsvp,
+          messaging: d.messaging, guestSegments: d.guestSegments,
+          themePresetActive: d.themePresetActive,
+        });
+      }
+      let baseline = snapshot(draft);
       const saveBar = ce('div', { class: 'save-bar' });
-      const saveBtn = ce('button', { class: 'btn' }, ['Save changes']);
+      const meta = ce('div', { class: 'meta', text: 'All changes saved' });
+      const saveBtn = ce('button', { class: 'btn', disabled: 'disabled' }, ['Save changes']);
+      let dirtyTick = null;
+      function recomputeDirty() {
+        const dirty = snapshot(draft) !== baseline;
+        saveBar.classList.toggle('is-dirty', dirty);
+        meta.textContent = dirty ? 'Unsaved changes' : 'All changes saved';
+        if (dirty) saveBtn.removeAttribute('disabled'); else saveBtn.setAttribute('disabled', 'disabled');
+      }
+      function scheduleDirty() {
+        if (dirtyTick) return;
+        dirtyTick = setTimeout(() => { dirtyTick = null; recomputeDirty(); }, 120);
+      }
+      // Any input/click inside the settings host marks draft potentially
+      // dirty — we debounce re-serialisation to avoid churn.
+      host.addEventListener('input', scheduleDirty, true);
+      host.addEventListener('click', scheduleDirty, true);
+      host.addEventListener('change', scheduleDirty, true);
+      // beforeunload guard — only warn while there are unsaved changes.
+      const beforeUnload = (e) => {
+        if (snapshot(draft) !== baseline) { e.preventDefault(); e.returnValue = ''; }
+      };
+      window.addEventListener('beforeunload', beforeUnload);
+
       saveBtn.addEventListener('click', async () => {
         saveBtn.disabled = true;
-        status.className = 'form-msg muted';
-        status.textContent = 'Saving…';
+        meta.textContent = 'Saving…';
         // Drop empty status options + segments without ID before saving.
         draft.rsvp.statusOptions = (draft.rsvp.statusOptions || []).map(s => String(s || '').trim()).filter(Boolean);
         if (!draft.rsvp.statusOptions.length) draft.rsvp.statusOptions = ['Attending', 'Maybe', 'Declined'];
@@ -1065,18 +1143,22 @@
             themePresetActive: draft.themePresetActive,
           } } });
           await loadBootstrap();
+          // Reset baseline so dirty-state resets to clean — do this BEFORE
+          // renderTabs() because renderTabs will rebuild the whole tab and
+          // this closure becomes dead.
+          baseline = snapshot(draft);
+          window.removeEventListener('beforeunload', beforeUnload);
           renderTabs();
-          status.className = 'form-msg is-success';
-          status.textContent = 'Saved. The invite page now reflects your changes.';
+          toast('Settings saved. Invite page is live.', 'success');
         } catch (e) {
-          status.className = 'form-msg is-error';
-          status.textContent = 'Save failed: ' + e.message;
+          toast('Save failed: ' + e.message, 'error', 6000);
+          recomputeDirty();
         } finally {
-          saveBtn.disabled = false;
+          saveBtn.disabled = snapshot(draft) === baseline;
         }
       });
       const previewLink = ce('a', { class: 'btn ghost', href: '/invite.html', target: '_blank' }, ['Preview invite ↗']);
-      saveBar.appendChild(status);
+      saveBar.appendChild(meta);
       saveBar.appendChild(ce('div', { class: 'row' }, [previewLink, saveBtn]));
 
       host.appendChild(themeCard);
@@ -1105,7 +1187,6 @@
       const restoreBtn = ce('button', { class: 'btn ghost', onclick: () => restoreInput.click() }, ['Restore from JSON']);
       const wipeChk = ce('input', { type: 'checkbox' });
       const wipeLbl = ce('label', { class: 'field', style: 'flex-direction:row; align-items:center; gap:6px;' }, [wipeChk, ' Wipe existing guests first']);
-      const status = ce('p', { class: 'muted' });
       restoreInput.addEventListener('change', async () => {
         const file = restoreInput.files[0];
         if (!file) return;
@@ -1113,22 +1194,21 @@
           restoreInput.value = '';
           return;
         }
-        status.className = 'form-msg muted';
         try {
           const text = await file.text();
           const parsed = JSON.parse(text);
           const guests = parsed.guests || [];
           const res = await api('/api/import.json', { method: 'POST', body: { guests, wipeFirst: wipeChk.checked } });
-          status.className = 'form-msg is-success';
-          status.textContent = `Imported ${res.imported} guests.`;
+          toast(`Imported ${res.imported} guests.`, 'success');
         } catch (e) {
-          status.className = 'form-msg is-error';
-          status.textContent = `Restore failed: ${e.message}`;
+          toast(`Restore failed: ${e.message}`, 'error', 6000);
+        } finally {
+          restoreInput.value = '';
         }
       });
       if (STATE.features.jsonBackup) row.appendChild(restoreBtn);
       card.appendChild(row);
-      if (STATE.features.jsonBackup) { card.appendChild(wipeLbl); card.appendChild(restoreInput); card.appendChild(status); }
+      if (STATE.features.jsonBackup) { card.appendChild(wipeLbl); card.appendChild(restoreInput); }
 
       host.appendChild(card);
     }
