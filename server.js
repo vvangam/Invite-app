@@ -418,6 +418,7 @@ function safeJson(str, fallback) {
 const CONFIG_KEY_ALLOWLIST = new Set([
   'event', 'events', 'hosts', 'guestSegments', 'groups',
   'copy', 'features', 'rsvp', 'theme', 'messaging', 'defaults', 'assetRoles',
+  'themePresetActive',
 ]);
 
 function isPlainObject(x) {
@@ -454,6 +455,42 @@ async function mergedConfig() {
   return merged;
 }
 
+// Resolve the active preset + custom token overlay into a single bundle the
+// client applies as CSS custom properties. The "Custom" overlay is the
+// legacy `cfg.theme` block — any non-empty field overrides the preset token.
+function resolveTheme(cfg) {
+  const presets  = Array.isArray(cfg.themePresets) ? cfg.themePresets : [];
+  const wantedId = cfg.themePresetActive || (presets[0] && presets[0].id);
+  const preset   = presets.find((p) => p.id === wantedId) || presets[0] || null;
+
+  // Compact picker metadata — never leaks the full token bundle for inactive
+  // presets (small, JSON-serializable, safe to ship to public clients).
+  const choices = presets.map((p) => ({
+    id:     p.id,
+    label:  p.label,
+    hint:   p.hint || '',
+    swatch: Array.isArray(p.swatch) ? p.swatch.slice(0, 3) : [],
+  }));
+
+  if (!preset) {
+    return { active: null, choices, tokens: {}, fontHref: '' };
+  }
+
+  const baseTokens = { ...(preset.tokens || {}) };
+  const overlay    = cfg.theme || {};
+  for (const [k, v] of Object.entries(overlay)) {
+    if (v != null && v !== '') baseTokens[k] = v;
+  }
+
+  return {
+    active:   preset.id,
+    label:    preset.label,
+    fontHref: preset.fontHref || '',
+    tokens:   baseTokens,
+    choices,
+  };
+}
+
 function assetToPublic(row) {
   const variants = safeJson(row.variants_json, {});
   const variantNames = Object.keys(variants);
@@ -476,13 +513,14 @@ function assetToPublic(row) {
 // ── Routes: public ──────────────────────────────────────────────────────────
 app.get('/api/bootstrap', async (_req, res) => {
   try {
-    const cfg = await mergedConfig();
+    const cfg   = await mergedConfig();
+    const theme = resolveTheme(cfg);
     res.json({
       ok: true,
       appVersion: cfg.appVersion,
       copy:       cfg.copy,
       features:   cfg.features,
-      theme:      cfg.theme,
+      theme,
       requiresPin: Boolean(cfg.pin),
       assetRoles: cfg.assetRoles,
       defaults:   cfg.defaults,
@@ -545,6 +583,7 @@ app.get('/api/public-invite', async (req, res) => {
 
     const assets = await loadAssetsByRole();
     const cfg = await mergedConfig();
+    const theme = resolveTheme(cfg);
     res.json({
       ok: true,
       event:      cfg.event,
@@ -553,7 +592,7 @@ app.get('/api/public-invite', async (req, res) => {
       segments:   cfg.guestSegments,
       features:   cfg.features,
       copy:       cfg.copy,
-      theme:      cfg.theme,
+      theme,
       rsvp:       { fields: cfg.rsvp.fields, statusOptions: cfg.rsvp.statusOptions, allowSelfEdit: cfg.rsvp.allowSelfEdit, submittedCopy: cfg.rsvp.submittedCopy, lockAfterDeadline: cfg.rsvp.lockAfterDeadline },
       assets,
       guest,
@@ -708,12 +747,20 @@ app.post('/api/logout', requireAuth, async (req, res) => {
 // Config: read merged config for the admin form
 app.get('/api/config', requireAuth, async (_req, res) => {
   try {
-    const cfg = await mergedConfig();
+    const cfg   = await mergedConfig();
+    const theme = resolveTheme(cfg);
     res.json({ ok: true, config: {
       event: cfg.event, events: cfg.events, hosts: cfg.hosts,
       guestSegments: cfg.guestSegments, groups: cfg.groups,
       copy: cfg.copy, features: cfg.features, rsvp: cfg.rsvp,
       theme: cfg.theme, messaging: cfg.messaging, defaults: cfg.defaults,
+      themePresetActive: cfg.themePresetActive,
+      themePresets:      theme.choices,
+      themePresetsFull: (cfg.themePresets || []).map((p) => ({
+        id: p.id, label: p.label, hint: p.hint || '',
+        swatch: Array.isArray(p.swatch) ? p.swatch.slice(0, 3) : [],
+        fontHref: p.fontHref || '', tokens: p.tokens || {},
+      })),
     }});
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });

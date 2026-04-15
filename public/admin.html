@@ -4,58 +4,153 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title data-copy-key="adminTitle">Admin</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect x='6' y='6' width='52' height='52' rx='12' fill='%238b6f47'/></svg>"/>
-  <style>
-    :root { --bg:#faf7f2; --fg:#1a1a1a; --accent:#8b6f47; --muted:#6b6b6b; --card:#fff; --border:rgba(0,0,0,.1); --radius:12px; }
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect x='6' y='6' width='52' height='52' rx='12' fill='%23222'/></svg>"/>
+  <style id="theme-vars">
+    :root {
+      --bg:#faf7f2; --surface:#ffffff; --surface2:#f3efe8;
+      --fg:#1a1a1a; --fgMuted:#6b6b6b; --fgSubtle:#9a9a9a;
+      --accent:#8b6f47; --accentFg:#ffffff;
+      --border:rgba(0,0,0,.1);
+      --success:#3a8a4a; --warn:#b07a1f; --danger:#b13a3a;
+      --fontDisplay: ui-serif, Georgia, 'Times New Roman', serif;
+      --fontBody: system-ui, -apple-system, sans-serif;
+      --fontMono: ui-monospace, 'SF Mono', Menlo, monospace;
+      --trackingTight:-0.01em; --trackingBase:0; --trackingLoose:.08em;
+      --radiusSm:8px; --radius:12px; --radiusLg:20px;
+      --shadow1: 0 1px 2px rgba(0,0,0,.05);
+      --shadow2: 0 8px 24px rgba(0,0,0,.08);
+      --maxWidth: 1200px;
+      --motionFast: 120ms; --motionBase: 200ms; --motionSlow: 360ms;
+    }
     *,*::before,*::after { box-sizing:border-box; }
     html,body { margin:0; padding:0; }
-    body { background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, sans-serif; min-height:100dvh; }
-    header { border-bottom: 1px solid var(--border); background: var(--card); padding: 14px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
-    header h1 { margin:0; font-size:1.2rem; font-weight:600; }
-    header nav { display:flex; gap:6px; flex-wrap:wrap; }
-    header nav button { appearance:none; border:1px solid var(--border); background:transparent; color: var(--fg); padding:.45em .9em; border-radius:999px; cursor:pointer; font: inherit; }
-    header nav button.active { background: var(--accent); color:#fff; border-color: var(--accent); }
-    main { padding: 22px; max-width: 1200px; margin: 0 auto; }
-    .card { background: var(--card); border:1px solid var(--border); border-radius: var(--radius); padding: 18px; margin: 14px 0; }
-    h2 { margin: 0 0 12px; font-size: 1.05rem; }
-    .muted { color: var(--muted); }
+    body {
+      background: var(--bg); color: var(--fg); font-family: var(--fontBody);
+      min-height:100dvh; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    }
+    header {
+      border-bottom: 1px solid var(--border); background: var(--surface);
+      padding: 14px 20px; display:flex; align-items:center; justify-content:space-between;
+      gap:12px; flex-wrap:wrap; position: sticky; top: 0; z-index: 10;
+      backdrop-filter: saturate(140%) blur(6px);
+    }
+    header h1 { margin:0; font-family: var(--fontDisplay); font-size:1.25rem; font-weight:600; letter-spacing: var(--trackingTight); }
+    header nav { display:flex; gap:4px; flex-wrap:wrap; }
+    header nav button {
+      appearance:none; border:1px solid transparent; background:transparent; color: var(--fgMuted);
+      padding:.45em .95em; border-radius:999px; cursor:pointer; font: inherit; font-size:.92em;
+      transition: color var(--motionFast) ease, background var(--motionFast) ease, border-color var(--motionFast) ease;
+    }
+    header nav button:hover { color: var(--fg); background: var(--surface2); }
+    header nav button.active { background: var(--fg); color: var(--surface); border-color: var(--fg); }
+    main { padding: 22px; max-width: var(--maxWidth); margin: 0 auto; }
+    .card {
+      background: var(--surface); border:1px solid var(--border); border-radius: var(--radius);
+      padding: 20px; margin: 14px 0; box-shadow: var(--shadow1);
+    }
+    h2 { margin: 0 0 14px; font-family: var(--fontDisplay); font-size: 1.15rem; font-weight:600; letter-spacing: var(--trackingTight); }
+    h3 { margin: 0 0 8px; font-family: var(--fontDisplay); font-weight:600; }
+    .muted { color: var(--fgMuted); }
+    .subtle { color: var(--fgSubtle); }
     .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
     .grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-    input, select, textarea, button {
-      font: inherit; color: var(--fg);
-    }
+    input, select, textarea, button { font: inherit; color: var(--fg); }
     input, select, textarea {
-      padding: .55em .7em; border:1px solid var(--border); border-radius: 8px; background: #fff; width: 100%;
+      padding: .55em .7em; border:1px solid var(--border); border-radius: var(--radiusSm);
+      background: var(--surface); width: 100%;
+      transition: border-color var(--motionFast) ease, box-shadow var(--motionFast) ease;
     }
-    label.field { display:grid; gap:4px; font-size:.88em; color: var(--muted); }
-    .btn { display:inline-block; appearance:none; border:0; cursor:pointer; font-weight:600; padding:.6em 1em; border-radius: 999px; background: var(--accent); color:#fff; }
-    .btn.small { padding:.4em .7em; font-size:.88em; }
+    input:hover, select:hover, textarea:hover { border-color: color-mix(in srgb, var(--fg) 22%, transparent); }
+    label.field { display:grid; gap:4px; font-size:.85em; color: var(--fgMuted); letter-spacing: .02em; }
+    .btn {
+      display:inline-flex; align-items:center; gap:.4em; appearance:none; border:0; cursor:pointer;
+      font-weight:600; padding:.6em 1.1em; border-radius: 999px;
+      background: var(--fg); color: var(--surface);
+      transition: transform var(--motionFast) ease, background var(--motionFast) ease, color var(--motionFast) ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn.small { padding:.4em .85em; font-size:.85em; }
     .btn.ghost { background: transparent; color: var(--fg); border:1px solid var(--border); }
-    .btn.danger { background:#b13a3a; }
-    .btn:disabled { opacity:.6; cursor:not-allowed; }
-    table { width:100%; border-collapse: collapse; font-size:.92em; }
-    th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align:left; vertical-align: top; }
-    th { background: rgba(0,0,0,.03); font-weight:600; }
-    .chip { display:inline-block; padding:.15em .55em; border-radius:999px; background: rgba(0,0,0,.06); font-size:.78em; }
-    .stats { display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-    .stat { padding: 10px 12px; border:1px solid var(--border); border-radius: var(--radius); background:#fff; }
-    .stat .n { font-size: 1.4rem; font-weight: 700; }
-    .stat .l { color: var(--muted); font-size:.82em; }
-    .upload-zone {
-      border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align:center;
-      background: #fafafa; transition: background .2s ease, border-color .2s ease;
+    .btn.ghost:hover { background: var(--surface2); }
+    .btn.accent { background: var(--accent); color: var(--accentFg); }
+    .btn.danger { background: var(--danger); color: #fff; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+    *:focus { outline: none; }
+    *:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
     }
-    .upload-zone.drag { background: #fff6e8; border-color: var(--accent); }
-    .asset-tile { border:1px solid var(--border); border-radius: var(--radius); padding: 10px; background:#fff; }
-    .asset-tile img, .asset-tile video { width:100%; height: 160px; object-fit: contain; background: #f3f0ea; border-radius: 8px; }
-    .asset-tile .foot { display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:.82em; }
-    #pin-overlay { position: fixed; inset: 0; background: rgba(10,10,10,.6); display:flex; align-items:center; justify-content:center; z-index: 100; }
-    #pin-overlay .box { background: #fff; padding: 22px; border-radius: var(--radius); width: min(92vw, 360px); }
+    table { width:100%; border-collapse: collapse; font-size:.92em; }
+    th, td { padding: 10px; border-bottom: 1px solid var(--border); text-align:left; vertical-align: top; }
+    th { background: var(--surface2); font-weight:600; font-size:.8em; text-transform: uppercase; letter-spacing: var(--trackingLoose); color: var(--fgMuted); }
+    tbody tr { transition: background var(--motionFast) ease; }
+    tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+    .chip { display:inline-block; padding:.18em .65em; border-radius:999px; background: var(--surface2); font-size:.78em; color: var(--fgMuted); }
+    .stats { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+    .stat {
+      padding: 14px 16px; border:1px solid var(--border); border-radius: var(--radius);
+      background: var(--surface); transition: transform var(--motionFast) ease;
+    }
+    .stat:hover { transform: translateY(-1px); box-shadow: var(--shadow1); }
+    .stat .n { font-family: var(--fontDisplay); font-size: 1.7rem; font-weight: 600; letter-spacing: var(--trackingTight); }
+    .stat .l { color: var(--fgMuted); font-size:.78em; text-transform: uppercase; letter-spacing: var(--trackingLoose); margin-top: 4px; }
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: var(--radius); padding: 28px; text-align:center;
+      background: var(--surface2); transition: background var(--motionBase) ease, border-color var(--motionBase) ease;
+    }
+    .upload-zone.drag { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-color: var(--accent); }
+    .asset-tile { border:1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--surface); }
+    .asset-tile img, .asset-tile video {
+      width:100%; aspect-ratio: 4/3; object-fit: contain;
+      background: var(--surface2); border-radius: var(--radiusSm);
+    }
+    .asset-tile .foot { display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:.82em; }
+    #pin-overlay {
+      position: fixed; inset: 0; background: rgba(10,10,10,.65); backdrop-filter: blur(8px);
+      display:flex; align-items:center; justify-content:center; z-index: 100;
+    }
+    #pin-overlay .box {
+      background: var(--surface); padding: 26px; border-radius: var(--radiusLg);
+      width: min(92vw, 380px); box-shadow: var(--shadow2);
+    }
     .hidden { display:none !important; }
-    .err { color:#b13a3a; }
+    .err, .form-msg.is-error { color: var(--danger); }
+    .form-msg.is-success { color: var(--success); }
     details summary { cursor:pointer; font-weight:600; }
+
+    /* Preset picker chips */
+    .preset-grid {
+      display:grid; gap:12px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+    .preset-chip {
+      appearance:none; cursor:pointer; text-align:left;
+      border:1px solid var(--border); border-radius: var(--radius);
+      padding: 14px; background: var(--surface);
+      transition: transform var(--motionFast) ease, border-color var(--motionFast) ease, box-shadow var(--motionBase) ease;
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .preset-chip:hover { transform: translateY(-2px); box-shadow: var(--shadow2); }
+    .preset-chip.active { border-color: var(--fg); box-shadow: 0 0 0 2px var(--fg) inset; }
+    .preset-swatch { display:flex; gap:0; height: 44px; border-radius: var(--radiusSm); overflow: hidden; border:1px solid var(--border); }
+    .preset-swatch span { flex:1; }
+    .preset-chip .label { font-family: var(--fontDisplay); font-weight:600; font-size:1rem; }
+    .preset-chip .hint { color: var(--fgMuted); font-size:.82em; line-height: 1.4; }
+
+    /* Save bar */
+    .save-bar {
+      position: sticky; bottom: 12px;
+      background: var(--surface); border:1px solid var(--border); border-radius: var(--radiusLg);
+      padding: 14px 18px; display:flex; justify-content:space-between; align-items:center; gap:12px;
+      box-shadow: var(--shadow2); margin: 14px 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+      .btn:hover, .stat:hover, .preset-chip:hover { transform: none; }
+    }
     @media (max-width: 640px) {
       th.mobile-hide, td.mobile-hide { display:none; }
+      main { padding: 14px; }
     }
   </style>
 </head>
@@ -76,7 +171,7 @@
       <form id="pin-form" class="row" style="flex-direction:column; align-items:stretch; gap:10px;">
         <input type="password" id="pin-input" inputmode="numeric" autocomplete="one-time-code" required/>
         <button type="submit" class="btn">Unlock</button>
-        <p class="err muted" id="pin-err" style="min-height:1.2em;"></p>
+        <p class="form-msg is-error" id="pin-err" role="alert" aria-live="polite" style="min-height:1.2em; margin:0;"></p>
       </form>
     </div>
   </div>
@@ -90,12 +185,35 @@
       config:   null,
       features: {},
       copy:     {},
-      tab:      'assets',
+      tab:      null,
       guests:   [],
       assets:   [],
       stats:    null,
       selectedGuestIds: new Set(),
     };
+
+    function ensureFontLink(href) {
+      if (!href) return;
+      const id = 'preset-font-link';
+      let link = document.getElementById(id);
+      if (link && link.href === href) return;
+      if (!link) {
+        link = document.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+      }
+      link.href = href;
+    }
+
+    function applyPreset(theme) {
+      if (!theme || !theme.tokens) return;
+      const root = document.documentElement;
+      for (const [k, v] of Object.entries(theme.tokens)) {
+        if (v != null && v !== '') root.style.setProperty('--' + k, String(v));
+      }
+      ensureFontLink(theme.fontHref);
+    }
 
     const qs  = (s, r=document) => r.querySelector(s);
     const ce  = (tag, attrs={}, children=[]) => {
@@ -145,6 +263,11 @@
         const key = el.getAttribute('data-copy-key');
         if (STATE.copy[key]) el.textContent = STATE.copy[key];
       });
+      if (data.theme) applyPreset(data.theme);
+      if (!STATE.tab) {
+        const first = tabs()[0];
+        if (first) STATE.tab = first[0];
+      }
     }
 
     function tabs() {
@@ -227,10 +350,10 @@
       zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('drag'); doUpload(e.dataTransfer.files[0]); });
 
       zone.appendChild(msg);
-      zone.appendChild(ce('div', { class: 'row', style: 'justify-content:center; margin:8px 0;' }, [
-        ce('label', { class: 'field' }, ['Role', roleSel]),
-        ce('label', { class: 'field' }, ['Host slug', hostInput]),
-      ]));
+      const hasHosts = ((STATE.config && STATE.config.hosts) || []).length > 0;
+      const fieldRow = [ce('label', { class: 'field' }, ['Role', roleSel])];
+      if (hasHosts) fieldRow.push(ce('label', { class: 'field' }, ['Host slug', hostInput]));
+      zone.appendChild(ce('div', { class: 'row', style: 'justify-content:center; margin:8px 0;' }, fieldRow));
       zone.appendChild(btn);
       zone.appendChild(input);
       zone.appendChild(status);
@@ -469,8 +592,9 @@
       draft.copy   ||= {};
       draft.features ||= {};
       draft.theme  ||= {};
+      if (!draft.themePresetActive) draft.themePresetActive = (STATE.config.theme && STATE.config.theme.active) || '';
 
-      const status = ce('p', { class: 'muted', style: 'min-height:1.2em' });
+      const status = ce('p', { class: 'form-msg muted', style: 'min-height:1.2em; margin:0;' });
 
       function field(label, value, onInput, opts = {}) {
         const input = ce(opts.type === 'textarea' ? 'textarea' : 'input', {
@@ -552,19 +676,55 @@
       }
       featCard.appendChild(featGrid);
 
-      // ── Theme ─────────────────────────────────────────────────────────
-      const themeCard = ce('div', { class: 'card' }, [ce('h2', { text: 'Theme' })]);
-      const themeGrid = ce('div', { class: 'grid' });
+      // ── Theme: visual preset picker ──────────────────────────────────
+      const themeCard = ce('div', { class: 'card' }, [
+        ce('h2', { text: 'Theme' }),
+        ce('p', { class: 'muted', style: 'margin-top:0', text: 'Pick a preset. Click any chip to preview live; the change is saved when you click Save.' }),
+      ]);
+      const presetGrid = ce('div', { class: 'preset-grid' });
+      const presets = cfg.themePresetsFull || cfg.themePresets || [];
+
+      function renderPresetChips() {
+        presetGrid.innerHTML = '';
+        for (const p of presets) {
+          const swatch = ce('div', { class: 'preset-swatch' });
+          const colors = (p.swatch && p.swatch.length ? p.swatch : ['#eee','#888','#222']);
+          for (const c of colors) {
+            const sw = ce('span'); sw.style.background = c; swatch.appendChild(sw);
+          }
+          const chip = ce('button', {
+            type: 'button',
+            class: 'preset-chip' + (draft.themePresetActive === p.id ? ' active' : ''),
+            onclick: () => {
+              draft.themePresetActive = p.id;
+              renderPresetChips();
+              if (p.tokens) applyPreset({ tokens: p.tokens, fontHref: p.fontHref || '' });
+            },
+          });
+          chip.appendChild(swatch);
+          chip.appendChild(ce('div', { class: 'label', text: p.label || p.id }));
+          if (p.hint) chip.appendChild(ce('div', { class: 'hint', text: p.hint }));
+          presetGrid.appendChild(chip);
+        }
+        if (!presets.length) {
+          presetGrid.appendChild(ce('p', { class: 'muted', text: 'No presets configured.' }));
+        }
+      }
+      renderPresetChips();
+      themeCard.appendChild(presetGrid);
+
+      // Optional advanced overlay (color overrides)
+      const advanced = ce('details', { style: 'margin-top: 14px;' });
+      advanced.appendChild(ce('summary', { text: 'Advanced color overrides' }));
+      const themeGrid = ce('div', { class: 'grid', style: 'margin-top:10px' });
       const THEME_FIELDS = [
-        ['colorBg', 'Background color'],
-        ['colorFg', 'Text color'],
-        ['colorAccent', 'Accent color'],
-        ['colorMuted', 'Muted text color'],
+        ['bg', 'Background'], ['fg', 'Text'], ['accent', 'Accent'], ['fgMuted', 'Muted text'],
       ];
       for (const [key, label] of THEME_FIELDS) {
-        themeGrid.appendChild(field(label, draft.theme[key], (v) => { draft.theme[key] = v; }));
+        themeGrid.appendChild(field(label, draft.theme[key], (v) => { draft.theme[key] = v; }, { placeholder: 'leave blank to use preset' }));
       }
-      themeCard.appendChild(themeGrid);
+      advanced.appendChild(themeGrid);
+      themeCard.appendChild(advanced);
 
       // ── Hosts repeater ────────────────────────────────────────────────
       const hostsCard = ce('div', { class: 'card' }, [ce('h2', { text: 'Hosts / sides' }),
@@ -573,7 +733,7 @@
       function renderHosts() {
         hostsList.innerHTML = '';
         draft.hosts.forEach((h, i) => {
-          const row = ce('div', { class: 'card', style: 'background:#fafafa' });
+          const row = ce('div', { class: 'card', style: 'background: var(--surface2)' });
           const grid = ce('div', { class: 'grid' });
           grid.appendChild(field('Display label', h.label, (v) => { h.label = v; }, { placeholder: 'e.g. Vangam Family' }));
           grid.appendChild(field('Slug (a-z)', h.slug, (v) => { h.slug = v.toLowerCase().replace(/[^a-z0-9-]/g, '-'); }, { placeholder: 'e.g. vangam' }));
@@ -596,7 +756,7 @@
       function renderEvents() {
         evList.innerHTML = '';
         draft.events.forEach((ev, i) => {
-          const row = ce('div', { class: 'card', style: 'background:#fafafa' });
+          const row = ce('div', { class: 'card', style: 'background: var(--surface2)' });
           const grid = ce('div', { class: 'grid' });
           grid.appendChild(field('Name', ev.name, (v) => { ev.name = v; }, { placeholder: 'e.g. Mehendi' }));
           grid.appendChild(field('Date (display)', ev.dateLabel, (v) => { ev.dateLabel = v; }, { placeholder: 'Fri, Sept 13' }));
@@ -620,20 +780,24 @@
       }}, ['+ Add sub-event']));
 
       // ── Save bar ──────────────────────────────────────────────────────
-      const saveBar = ce('div', { class: 'card', style: 'position:sticky; bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:12px;' });
+      const saveBar = ce('div', { class: 'save-bar' });
       const saveBtn = ce('button', { class: 'btn' }, ['Save changes']);
       saveBtn.addEventListener('click', async () => {
         saveBtn.disabled = true;
+        status.className = 'form-msg muted';
         status.textContent = 'Saving…';
         try {
           await api('/api/config', { method: 'PUT', body: { config: {
             event: draft.event, events: draft.events, hosts: draft.hosts,
             copy: draft.copy, features: draft.features, theme: draft.theme,
+            themePresetActive: draft.themePresetActive,
           } } });
           await loadBootstrap();
           renderTabs();
-          status.textContent = 'Saved. The invite page will reflect changes on reload.';
+          status.className = 'form-msg is-success';
+          status.textContent = 'Saved. The invite page now reflects your changes.';
         } catch (e) {
+          status.className = 'form-msg is-error';
           status.textContent = 'Save failed: ' + e.message;
         } finally {
           saveBtn.disabled = false;
@@ -643,12 +807,12 @@
       saveBar.appendChild(status);
       saveBar.appendChild(ce('div', { class: 'row' }, [previewLink, saveBtn]));
 
+      host.appendChild(themeCard);
       host.appendChild(identity);
       host.appendChild(copyCard);
       host.appendChild(hostsCard);
       host.appendChild(eventsCard);
       host.appendChild(featCard);
-      host.appendChild(themeCard);
       host.appendChild(saveBar);
     }
 
@@ -667,13 +831,22 @@
       restoreInput.addEventListener('change', async () => {
         const file = restoreInput.files[0];
         if (!file) return;
+        if (wipeChk.checked && !confirm('This will permanently delete all existing guests before importing. Continue?')) {
+          restoreInput.value = '';
+          return;
+        }
+        status.className = 'form-msg muted';
         try {
           const text = await file.text();
           const parsed = JSON.parse(text);
           const guests = parsed.guests || [];
           const res = await api('/api/import.json', { method: 'POST', body: { guests, wipeFirst: wipeChk.checked } });
+          status.className = 'form-msg is-success';
           status.textContent = `Imported ${res.imported} guests.`;
-        } catch (e) { status.textContent = `Restore failed: ${e.message}`; }
+        } catch (e) {
+          status.className = 'form-msg is-error';
+          status.textContent = `Restore failed: ${e.message}`;
+        }
       });
       if (STATE.features.jsonBackup) row.appendChild(restoreBtn);
       card.appendChild(row);

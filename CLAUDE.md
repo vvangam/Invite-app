@@ -16,10 +16,11 @@ Single server file: [server.js](server.js). All behavior, copy, and features con
 ## Commands
 
 ```bash
-npm install          # install deps (express, pg, multer, sharp, pdfjs-dist)
-npm run dev          # node --watch server.js (node >=22.5 required)
-npm start            # production start
-npm test             # node --test test/
+npm install                        # install deps (express, pg, multer, sharp, pdfjs-dist)
+npm run dev                        # node --watch server.js (node >=22.5 required)
+npm start                          # production start
+npm test                           # node --test ./test/*.test.js
+node --test test/smoke.test.js     # run a single test file
 ```
 
 Local dev runs on `http://localhost:3000`. Admin at `/admin` — PIN from `CONFIG.pin` (default `1234`, override via `PIN` env var).
@@ -28,10 +29,12 @@ Local dev runs on `http://localhost:3000`. Admin at `/admin` — PIN from `CONFI
 
 ### Server ([server.js](server.js))
 
-- **Database dual-mode**: PostgreSQL via `pg` when `DATABASE_URL` is set; else SQLite via `node:sqlite` at `./invite.db`. All queries route through `dbRun` / `dbGet` / `dbAll` helpers that accept both SQL dialects. Use `sqlParam(i)` to emit `?` vs `$i`. **Never** bypass these helpers.
-- **Schema** (5 tables): `guests`, `assets`, `sessions`, `rsvp_events`, `config_overrides`. Migrations are idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in both branches of `initDb()`. When adding a column, update **both** branches.
-- **Auth**: `sessions` table keyed by 32-byte hex token (persists across restarts). PIN validated at `/api/validate-pin`. Protected routes use `requireAuth` middleware.
-- **Invite tokens**: each guest gets a 24-char hex `invite_token`. Public route `/i/:token` redirects to `invite.html?token=...`. `backfillInviteTokens()` runs on startup.
+- **Database dual-mode**: PostgreSQL via `pg` when `DATABASE_URL` is set; else `node:sqlite` (lazy-required — only loaded when Postgres isn't configured, so Node 22 without `--experimental-sqlite` doesn't crash prod) at `./invite.db`. All queries route through `dbRun` / `dbGet` / `dbAll` helpers that accept both SQL dialects. Use `sqlParam(i)` to emit `?` vs `$i`. **Never** bypass these helpers.
+- **Schema** (5 tables): `guests`, `assets`, `sessions`, `rsvp_events`, `config_overrides`. Migrations are idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in both branches of `initDb()`. When adding a column — including to `config_overrides` — update **both** the Postgres and SQLite branches.
+- **Auth**: `sessions` table keyed by a 32-char hex token (16 random bytes, persists across restarts). PIN validated at `/api/validate-pin`. Protected routes use `requireAuth` middleware.
+- **Invite tokens**: each guest gets a 24-char hex `invite_token`. `backfillInviteTokens()` runs on startup.
+- **Routes**: `/` redirects to `/invite.html`; `/admin` serves `admin.html`; `/i/:token` redirects to `/invite.html?token=…`; `/std/:slug` serves the save-the-date variant.
+- **Config overrides**: `config_overrides` (key → value_json) is the admin-editable layer on top of `config.js`. `loadOverrides()` + `mergedConfig()` deep-merge at request time; `/api/bootstrap` and `/api/public-invite` always serve the merged view. Writable keys are gated by `CONFIG_KEY_ALLOWLIST` (`event|events|hosts|copy|features|rsvp|theme|messaging`) in `PUT /api/config`.
 - **Asset pipeline**: uploads land in `UPLOAD_DIR` (default `./uploads/`). Images → sharp variants (full webp, 400px thumb, 1200x630 OG JPG). PDFs → original stored + page 1 rasterized via `pdftoppm` or `pdfjs-dist` fallback. Videos stored as-is, served with byte-range support. Max size `MAX_UPLOAD_MB`.
 - **Rate limiting**: in-memory token bucket keyed by IP. Applied to `/api/rsvp` (20/min) and `/api/validate-pin` (5/min).
 
@@ -55,7 +58,7 @@ All values env-overridable with safe placeholder defaults.
 
 ### Admin UI ([public/admin.html](public/admin.html))
 
-Tabs shown only when their feature flag is on: **Assets** (always if `features.assetUpload`), **Guests** (if `features.guestManager`), **Send** (if `features.bulkMessaging`), **Exports** (if any of `csvExport` / `jsonBackup`).
+Tabs: **Settings** (always — PIN-gated event/copy/theme editor, writes to `config_overrides` via `PUT /api/config`), **Assets** (if `features.assetUpload`), **Guests** (if `features.guestManager`), **Send** (if `features.bulkMessaging`), **Exports** (if any of `csvExport` / `jsonBackup`).
 
 Module-level state in plain `let` variables. No framework. State is in-memory; page reload hits API.
 
