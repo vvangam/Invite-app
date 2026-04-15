@@ -128,6 +128,15 @@
     .plus-ones { display: grid; gap: 8px; margin-top: 6px; }
     .plus-ones .ph { color: var(--fgSubtle); font-size: .84em; text-transform: none; letter-spacing: 0; font-weight: 400; }
 
+    /* Per-attendee dietary rows. */
+    .dietary-host { display: grid; gap: 10px; margin-top: 6px; }
+    .per-attendee-row { display: grid; gap: 4px; }
+    .per-attendee-name {
+      font-size: .82em; color: var(--fgSubtle);
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .per-attendee-row textarea { min-height: 52px; }
+
     /* FAQ accordion. */
     .faq-item {
       border: 1px solid var(--border); border-radius: var(--radiusSm);
@@ -464,7 +473,14 @@
       //   'flat'        — opaque surface, no blur
       //   'translucent' — default, blurred translucent card
       //   'card'        — solid card with elevated shadow
-      const surface = surfaceHint || 'translucent';
+      // Auto-promote to 'edge' when the asset is a PDF or PNG — opaque/chromed
+      // uploads look wrong inside a translucent card. 'card' override wins.
+      let surface = surfaceHint || 'translucent';
+      if (asset && asset.mime && surface !== 'card' && surface !== 'edge') {
+        if (asset.mime === 'application/pdf' || asset.mime === 'image/png') {
+          surface = 'edge';
+        }
+      }
       const surfaceClass =
         surface === 'edge' ? 'card hero hero-edge reveal' :
         surface === 'flat' ? 'card hero hero-flat reveal' :
@@ -710,12 +726,17 @@
         name:      guest ? guest.guestName : '',
         partySize: guest ? (guest.confirmedPartySize ?? guest.partySize ?? 1) : 1,
         rsvp:      guest && guest.rsvp && guest.rsvp !== 'Pending' ? guest.rsvp : statusOptions[0],
-        dietary:   guest ? guest.dietary || '' : '',
         notes:     guest ? guest.notes   || '' : '',
         phone:     guest ? guest.mobileNumber || '' : '',
         email:     guest ? guest.emailAddress  || '' : '',
         selections: (guest && guest.eventSelections) || [],
         partyMembers: (guest && Array.isArray(guest.partyMembers)) ? guest.partyMembers.slice() : [],
+        // Dietary stored positionally per attendee (0 = primary, 1.. = plus-ones)
+        dietaryEntries: (function () {
+          const raw = guest ? guest.dietary : '';
+          if (Array.isArray(raw)) return raw.map(d => String(d && d.text || ''));
+          return [String(raw || '')];
+        })(),
       };
 
       const updateSelection = (id, name, status) => {
@@ -726,7 +747,7 @@
 
       if (fields.name && fields.name.enabled) {
         const input = ce('input', { type: 'text', name: 'name', required: fields.name.required ? 'required' : undefined, value: state.name });
-        input.addEventListener('input', (e) => state.name = e.target.value);
+        input.addEventListener('input', (e) => { state.name = e.target.value; renderDietary(); });
         form.appendChild(ce('label', {}, [fields.name.label || 'Your Name', input]));
       }
 
@@ -745,15 +766,16 @@
         if (!plusOnesHost) return;
         plusOnesHost.innerHTML = '';
         const extra = Math.max(0, Number(state.partySize) - 1);
-        if (extra <= 0) return;
+        if (extra <= 0) { renderDietary(); return; }
         // Pad / trim the stored array to the current extra-guest count.
         if (state.partyMembers.length > extra) state.partyMembers.length = extra;
         while (state.partyMembers.length < extra) state.partyMembers.push('');
         for (let i = 0; i < extra; i++) {
           const inp = ce('input', { type: 'text', value: state.partyMembers[i] || '', placeholder: `Guest ${i + 2}` });
-          inp.addEventListener('input', (e) => { state.partyMembers[i] = e.target.value; });
+          inp.addEventListener('input', (e) => { state.partyMembers[i] = e.target.value; renderDietary(); });
           plusOnesHost.appendChild(inp);
         }
+        renderDietary();
       }
       if (fields.partySize && fields.partySize.enabled) {
         const input = ce('input', { type: 'number', name: 'partySize', min: '0', max: String(fields.partySize.max || 10), value: String(state.partySize) });
@@ -791,10 +813,38 @@
         renderEventButtons();
       }
 
+      let dietaryHost = null;
+      function renderDietary() {
+        if (!dietaryHost) return;
+        dietaryHost.innerHTML = '';
+        const partyCount = Math.max(1, Number(state.partySize) || 1);
+        if (state.dietaryEntries.length > partyCount) state.dietaryEntries.length = partyCount;
+        while (state.dietaryEntries.length < partyCount) state.dietaryEntries.push('');
+        if (partyCount <= 1) {
+          const input = ce('input', { type: 'text', value: state.dietaryEntries[0] || '' });
+          input.addEventListener('input', (e) => state.dietaryEntries[0] = e.target.value);
+          dietaryHost.appendChild(input);
+          return;
+        }
+        const labels = [String(state.name || '').trim() || 'Guest 1'];
+        for (let i = 0; i < partyCount - 1; i++) {
+          labels.push(String(state.partyMembers[i] || '').trim() || `Guest ${i + 2}`);
+        }
+        for (let i = 0; i < partyCount; i++) {
+          const ta = ce('textarea', { rows: '2', placeholder: 'None / any notes' });
+          ta.value = state.dietaryEntries[i] || '';
+          ta.addEventListener('input', (e) => state.dietaryEntries[i] = e.target.value);
+          const row = ce('div', { class: 'per-attendee-row' }, [
+            ce('div', { class: 'per-attendee-name', text: labels[i] }),
+            ta
+          ]);
+          dietaryHost.appendChild(row);
+        }
+      }
       if (fields.dietary && fields.dietary.enabled) {
-        const input = ce('input', { type: 'text', name: 'dietary', value: state.dietary });
-        input.addEventListener('input', (e) => state.dietary = e.target.value);
-        form.appendChild(ce('label', {}, [fields.dietary.label || 'Dietary preferences', input]));
+        dietaryHost = ce('div', { class: 'dietary-host' });
+        form.appendChild(ce('label', {}, [fields.dietary.label || 'Dietary preferences', dietaryHost]));
+        renderDietary();
       }
 
       if (fields.notes && fields.notes.enabled) {
@@ -815,6 +865,19 @@
           msg.textContent = 'Name is required.'; msg.classList.add('is-error'); return;
         }
         submit.disabled = true; msg.textContent = '';
+        const partyCount = Math.max(1, Number(state.partySize) || 1);
+        let dietaryValue;
+        if (fields.dietary && fields.dietary.enabled && partyCount > 1) {
+          const names = [state.name || 'Guest 1', ...state.partyMembers];
+          dietaryValue = [];
+          for (let i = 0; i < partyCount; i++) {
+            const nm = String(names[i] || '').trim() || `Guest ${i + 1}`;
+            const txt = String(state.dietaryEntries[i] || '').trim();
+            if (txt) dietaryValue.push({ name: nm, text: txt });
+          }
+        } else {
+          dietaryValue = String(state.dietaryEntries[0] || '').trim();
+        }
         const body = {
           token:     getToken(),
           name:      state.name,
@@ -824,7 +887,7 @@
           segment:   (guest && guest.segment) || '',
           rsvp:      state.rsvp,
           notes:     state.notes,
-          dietary:   state.dietary,
+          dietary:   dietaryValue,
           eventSelections: state.selections,
           partyMembers: state.partyMembers.map(s => String(s || '').trim()).filter(Boolean),
         };

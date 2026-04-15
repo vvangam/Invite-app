@@ -731,6 +731,17 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
           rsvp = 'Attending', notes = '', dietary = '', eventSelections = [],
           partyMembers = [] } = req.body || {};
 
+  // dietary can arrive as a legacy string or a new per-attendee array
+  // [{name, text}]. Persisted as JSON-encoded text either way; the parser
+  // distinguishes them on read.
+  const dietaryPayload = Array.isArray(dietary)
+    ? JSON.stringify(
+        dietary
+          .map(d => ({ name: String(d?.name || '').trim(), text: String(d?.text || '').trim() }))
+          .filter(d => d.text)
+      )
+    : String(dietary || '').trim();
+
   if (!String(name || '').trim()) return res.status(400).json({ ok: false, error: 'Name required' });
 
   try {
@@ -759,7 +770,7 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
           `UPDATE guests SET guest_name=?, mobile_number=?, email_address=?, segment=?, rsvp=?, confirmed_party_size=?, notes=?, dietary=?, event_selections=?, party_members=?, invite_status='Sent' WHERE invite_token=?`,
           `UPDATE guests SET guest_name=$1, mobile_number=$2, email_address=$3, segment=$4, rsvp=$5, confirmed_party_size=$6, notes=$7, dietary=$8, event_selections=$9, party_members=$10, invite_status='Sent' WHERE invite_token=$11`,
           [String(name).trim(), String(phone || guest.mobile_number).trim(), String(email || guest.email_address).trim(),
-           String(segment || guest.segment).trim(), rsvp, nextPartySize, String(notes).trim(), String(dietary).trim(),
+           String(segment || guest.segment).trim(), rsvp, nextPartySize, String(notes).trim(), dietaryPayload,
            JSON.stringify(normalized), partyMembersJson, trimmedToken]
         );
         await logRsvpEvent(guest.id, 'submitted', req);
@@ -779,7 +790,7 @@ app.post('/api/rsvp', rateLimit(CONFIG.rateLimits.publicRsvpPerMin), async (req,
       `INSERT INTO guests (guest_group, guest_name, mobile_number, email_address, added_by_name, added_by_initials, party_size, segment, rsvp, confirmed_party_size, notes, dietary, event_selections, party_members, invite_status, source, invite_token) VALUES ('', $1, $2, $3, 'Public RSVP', 'PR', $4, $5, $6, $7, $8, $9, $10, $11, 'Sent', 'website', $12)`,
       [String(name).trim(), String(phone).trim(), String(email).trim(),
        Math.max(1, Number(partySize) || 1), String(segment).trim(), rsvp, nextPartySize,
-       String(notes).trim(), String(dietary).trim(), JSON.stringify(normalized), partyMembersJson, fallbackToken]
+       String(notes).trim(), dietaryPayload, JSON.stringify(normalized), partyMembersJson, fallbackToken]
     );
     const inserted = await dbGet(
       `SELECT * FROM guests WHERE invite_token=?`,
@@ -1286,7 +1297,7 @@ function guestToFrontend(r) {
     confirmedPartySize: r.confirmed_party_size,
     followUp:           Boolean(r.follow_up),
     notes:              r.notes,
-    dietary:            r.dietary,
+    dietary:            parseDietary(r.dietary),
     eventSelections:    parseEventSelections(r.event_selections),
     partyMembers:       parsePartyMembers(r.party_members),
     source:             r.source,
@@ -1301,6 +1312,24 @@ function parseEventSelections(raw) {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     return normalizeEventSelections(parsed);
   } catch { return []; }
+}
+
+function parseDietary(raw) {
+  if (!raw) return '';
+  const str = typeof raw === 'string' ? raw : String(raw);
+  const trimmed = str.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map(d => ({ name: String(d?.name || '').trim(), text: String(d?.text || '').trim() }))
+          .filter(d => d.name || d.text);
+      }
+    } catch { /* fall through to string */ }
+  }
+  return trimmed;
 }
 
 function parsePartyMembers(raw) {

@@ -103,16 +103,26 @@ Take the page from one long invite to a navigable site, mirroring Joy/Zola.
   trimmed, empty entries dropped, and the list is capped at `partySize-1`
   server-side. Schema: `party_members TEXT` column added via idempotent
   `ensureColumn()` migration helper (PG native, SQLite via PRAGMA).
-- [ ] **Per-attendee dietary** — when `fields.dietary.enabled`, render one
-  textarea per attendee (with their name as label).
-  Schema: change `dietary` to JSON or stringify.
+- [x] **Per-attendee dietary** — when `fields.dietary.enabled` and
+  `partySize > 1`, renders one textarea per attendee labeled with their
+  name (primary + partyMembers). Submits as JSON array
+  `[{name, text}]`; single-attendee mode keeps the legacy string.
+  Server-side `dietaryPayload` normalizes either shape, filters empty
+  entries, stores as text. `parseDietary()` in `guestToFrontend` returns
+  an array when stored-as-JSON, a string otherwise.
 - [x] **Per-event RSVP filtering by segment** — invite.html now applies
   `applySegmentFilter(events, segments, guest)` before rendering both the
   events grid and the per-event RSVP picker. Segments without
   `includesEventIds` fall through to "all events" as before.
-- [ ] **Hero polish** — remove the translucent card around opaque PDFs;
-  conditional `heroSurface: 'edge'` for PDF/PNG, `'card'` for photos.
-- [ ] Verify `prefers-reduced-motion` honored across new motion.
+- [x] **Hero polish** — `renderHero()` now auto-promotes `heroSurface` to
+  `'edge'` when the uploaded hero mime is `application/pdf` or
+  `image/png`, so opaque / transparent uploads don't get a blurry card
+  frame. Explicit `'card'` or `'edge'` themes still win.
+- [x] Verify `prefers-reduced-motion` honored across new motion —
+  global override at `@media (prefers-reduced-motion: reduce)` already
+  clamps all animation/transition durations to 0.001ms and neutralises
+  `.reveal`; countdown/nav highlight/FAQ `<details>` use no CSS
+  keyframes so nothing new to gate.
 
 ## Phase 4 — Admin workflow (1.5 days)
 
