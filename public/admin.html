@@ -495,7 +495,13 @@
       const zone = ce('div', { class: 'upload-zone' });
       const msg = ce('p', { class: 'muted', text: 'Drop a file here, or click to choose. Pick an event to attach this image to a specific ceremony.' });
       const input = ce('input', { type: 'file', multiple: 'multiple', accept: 'application/pdf,image/jpeg,image/png,image/webp,video/mp4', style: 'display:none' });
-      const roleSel = ce('select', {}, (STATE.config.assetRoles || []).map(r => ce('option', { value: r, text: r })));
+      // Lead with an explicit untagged option so a fresh upload doesn't
+      // silently inherit the first role in the list (which used to be 'hero',
+      // a singleton that wipes any existing main-event hero on upload).
+      const roleSel = ce('select', {}, [
+        ce('option', { value: '', text: '(untagged)' }),
+        ...(STATE.config.assetRoles || []).map(r => ce('option', { value: r, text: r })),
+      ]);
       const hostInput = ce('input', { type: 'text', placeholder: 'host slug (optional)', style: 'max-width:180px;' });
       // Event dropdown: '' = main event, or one of the configured sub-events.
       // Omitted entirely when no sub-events are configured, to keep the
@@ -517,9 +523,28 @@
         return api('/api/assets', { method: 'POST', body: fd });
       }
 
+      const SINGLETON_ROLES = new Set(['hero', 'background']);
+
       async function doUpload(files) {
         const list = Array.from(files || []).filter(Boolean);
         if (!list.length) return;
+        const role = roleSel.value || '';
+        const eventId = eventSel.value || '';
+        // Singleton guard: warn before clobbering. Either many files into one
+        // singleton slot (only the last survives) or replacing an existing
+        // singleton in the same scope.
+        if (SINGLETON_ROLES.has(role)) {
+          if (list.length > 1) {
+            const ok = confirm(`Role "${role}" only allows one asset per event. Only the LAST of ${list.length} files will be kept. Continue?`);
+            if (!ok) return;
+          }
+          const existing = (STATE.assets || []).find(a => a.role === role && (a.eventId || '') === eventId);
+          if (existing) {
+            const where = eventId ? `event "${eventId}"` : 'the main event';
+            const ok = confirm(`A "${role}" asset already exists for ${where} (${existing.filename}). Uploading will REPLACE it. Continue?`);
+            if (!ok) return;
+          }
+        }
         let ok = 0, fail = 0;
         for (const file of list) {
           status.textContent = `Uploading ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)\u2026`;

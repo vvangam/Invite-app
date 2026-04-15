@@ -737,6 +737,19 @@ function variantFilePath(variantName) {
   return p.startsWith(UPLOAD_DIR) ? p : null;
 }
 
+// Best-effort unlink of every file that backs an asset row (original + sharp
+// variants). Used by both the DELETE endpoint and the singleton-replace paths
+// in upload / PATCH so old files don't leak when their DB row goes away.
+async function unlinkAssetFiles(row) {
+  if (!row) return;
+  const variants = safeJson(row.variants_json, {});
+  const files = [row.storage_key, ...Object.values(variants)].filter(Boolean);
+  for (const f of files) {
+    const p = variantFilePath(f);
+    if (p && fs.existsSync(p)) { try { await fsp.unlink(p); } catch {} }
+  }
+}
+
 function safeJson(str, fallback) {
   if (!str) return fallback;
   try { return typeof str === 'string' ? JSON.parse(str) : str; }
@@ -896,6 +909,11 @@ app.get('/api/bootstrap', async (_req, res) => {
       groups:     cfg.groups,
       segments:   cfg.guestSegments,
       hosts:      cfg.hosts,
+      // events[] is already public via /api/public-invite — exposing it here
+      // lets the admin UI drive the per-event upload dropdown without a
+      // second round-trip to the PIN-gated /api/config endpoint.
+      events:     cfg.events,
+      event:      cfg.event,
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -1268,26 +1286,10 @@ app.post('/api/assets', requireAuth, async (req, res) => {
         variants = { full: storageKey };
       }
 
-      // Singleton roles are scoped to (role, event_id). A main-event hero
-      // (event_id='') and a ceremony hero (event_id='ceremony') can coexist,
-      // but uploading a second ceremony hero replaces the first. Gallery is
-      // non-singleton — multiple per event allowed.
-      if (role === 'hero' || role === 'background') {
-        await dbRun(
-          `DELETE FROM assets WHERE role=? AND event_id=?`,
-          `DELETE FROM assets WHERE role=$1 AND event_id=$2`,
-          [role, eventId]
-        );
-      }
-      // Enforce one asset per host slug (if provided)
-      if (hostSlug) {
-        await dbRun(
-          `DELETE FROM assets WHERE host_slug=?`,
-          `DELETE FROM assets WHERE host_slug=$1`,
-          [hostSlug]
-        );
-      }
-
+      // INSERT FIRST, then evict competing rows. If the insert blows up the
+      // existing data is untouched. Singleton scope is (role, event_id) so a
+      // main-event hero can coexist with a ceremony hero but a second ceremony
+      // hero replaces the first. Gallery is non-singleton — multiple per event.
       const result = pg
         ? await pg.query(
             `INSERT INTO assets (role, host_slug, event_id, original_filename, mime, size_bytes, page_count, storage_key, variants_json)
@@ -1298,6 +1300,33 @@ app.post('/api/assets', requireAuth, async (req, res) => {
             `INSERT INTO assets (role, host_slug, event_id, original_filename, mime, size_bytes, page_count, storage_key, variants_json) VALUES (?,?,?,?,?,?,?,?,?)`
           ).run(role, hostSlug, eventId, req.file.originalname, mime, req.file.size, pageCount, storageKey, JSON.stringify(variants));
       const id = pg ? result.rows[0].id : result.lastInsertRowid;
+
+      if (role === 'hero' || role === 'background') {
+        const stale = await dbAll(
+          `SELECT * FROM assets WHERE role=? AND event_id=? AND id<>?`,
+          `SELECT * FROM assets WHERE role=$1 AND event_id=$2 AND id<>$3`,
+          [role, eventId, id]
+        );
+        for (const old of stale) await unlinkAssetFiles(old);
+        await dbRun(
+          `DELETE FROM assets WHERE role=? AND event_id=? AND id<>?`,
+          `DELETE FROM assets WHERE role=$1 AND event_id=$2 AND id<>$3`,
+          [role, eventId, id]
+        );
+      }
+      if (hostSlug) {
+        const stale = await dbAll(
+          `SELECT * FROM assets WHERE host_slug=? AND id<>?`,
+          `SELECT * FROM assets WHERE host_slug=$1 AND id<>$2`,
+          [hostSlug, id]
+        );
+        for (const old of stale) await unlinkAssetFiles(old);
+        await dbRun(
+          `DELETE FROM assets WHERE host_slug=? AND id<>?`,
+          `DELETE FROM assets WHERE host_slug=$1 AND id<>$2`,
+          [hostSlug, id]
+        );
+      }
 
       const row = await dbGet(`SELECT * FROM assets WHERE id=?`, `SELECT * FROM assets WHERE id=$1`, [id]);
       res.json({ ok: true, asset: assetToPublic(row) });
@@ -1342,6 +1371,12 @@ app.patch('/api/assets/:id', requireAuth, async (req, res) => {
     // the row's old ones, so moving an asset between events doesn't leave
     // a stale duplicate behind.
     if (nextRole === 'hero' || nextRole === 'background') {
+      const stale = await dbAll(
+        `SELECT * FROM assets WHERE role=? AND event_id=? AND id<>?`,
+        `SELECT * FROM assets WHERE role=$1 AND event_id=$2 AND id<>$3`,
+        [nextRole, nextEventId, id]
+      );
+      for (const old of stale) await unlinkAssetFiles(old);
       await dbRun(
         `DELETE FROM assets WHERE role=? AND event_id=? AND id<>?`,
         `DELETE FROM assets WHERE role=$1 AND event_id=$2 AND id<>$3`,
@@ -1380,12 +1415,7 @@ app.delete('/api/assets/:id', requireAuth, async (req, res) => {
   if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: 'Invalid id' });
   const row = await dbGet(`SELECT * FROM assets WHERE id=?`, `SELECT * FROM assets WHERE id=$1`, [id]);
   if (!row) return res.status(404).json({ ok: false, error: 'Not found' });
-  const variants = safeJson(row.variants_json, {});
-  const files = [row.storage_key, ...Object.values(variants)].filter(Boolean);
-  for (const f of files) {
-    const p = variantFilePath(f);
-    if (p && fs.existsSync(p)) { try { await fsp.unlink(p); } catch {} }
-  }
+  await unlinkAssetFiles(row);
   await dbRun(`DELETE FROM assets WHERE id=?`, `DELETE FROM assets WHERE id=$1`, [id]);
   res.json({ ok: true });
 });
