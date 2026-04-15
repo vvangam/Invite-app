@@ -1475,6 +1475,21 @@
       const VIEWPORT_KEY = 'invite-admin:previewViewport';
       const split = ce('div', { class: 'settings-split' });
       const left = ce('div', { class: 'settings-left' });
+
+      // Setup quick-actions card — lets admins re-run the onboarding wizard
+      // on demand. Always visible; useful for handoffs ("walk me through setup
+      // again") and as a safety net if the wizard was dismissed prematurely.
+      const setupCard = ce('div', { class: 'card' });
+      setupCard.appendChild(ce('h2', { text: 'Setup' }));
+      setupCard.appendChild(ce('p', { class: 'muted', text: 'Re-run the guided setup wizard any time. It picks up where you left off and never overwrites values you\u2019ve already customised.' }));
+      const runWizardBtn = ce('button', { class: 'btn ghost', type: 'button' }, ['Run setup wizard']);
+      runWizardBtn.addEventListener('click', () => {
+        localStorage.removeItem(WIZARD_DONE_KEY);
+        runOnboardingWizard();
+      });
+      setupCard.appendChild(runWizardBtn);
+      left.appendChild(setupCard);
+
       left.appendChild(themeCard);
       left.appendChild(identity);
       left.appendChild(travelCard);
@@ -1739,16 +1754,26 @@
       const card = ce('div', { class: 'wizard-card' });
       overlay.appendChild(card);
       document.body.appendChild(overlay);
-      // Load any partial progress from a previous session.
+      card.appendChild(ce('p', { class: 'muted', text: 'Loading…' }));
+
+      // Fetch current config so re-running the wizard shows current values
+      // (not stale bootstrap data or an empty draft). Fall through gracefully
+      // if the request fails.
+      let serverCfg = {};
+      try {
+        const r = await api('/api/config');
+        serverCfg = (r && r.config) || {};
+      } catch {}
+
+      // Load any partial progress. localStorage draft only wins when it has
+      // a value; otherwise we seed from the live server config.
       let data = {};
       try { data = JSON.parse(localStorage.getItem(WIZARD_DRAFT_KEY) || '{}'); } catch {}
-      // Seed from server defaults so users who are partway through don't lose
-      // whatever they might've edited in Settings before reloading.
-      const ev = (STATE.config && STATE.config.event) || {};
+      const ev = serverCfg.event || {};
       data.title ||= DEFAULT_TITLES.has((ev.title || '').trim()) ? '' : ev.title;
       data.dateISO ||= ev.dateISO || '';
       data.venue ||= ev.venue || '';
-      data.preset ||= (STATE.config && STATE.config.theme && STATE.config.theme.active) || '';
+      data.preset ||= serverCfg.themePresetActive || '';
       data.hostName ||= '';
       data.hostRole ||= '';
       let step = Math.max(1, Math.min(5, Number(data._step) || 1));
