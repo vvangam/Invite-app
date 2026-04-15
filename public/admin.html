@@ -369,13 +369,33 @@
           grid.appendChild(ce('p', { class: 'muted', text: 'No assets yet. Upload your invite to get started.' }));
           return;
         }
+        const roleOptions = ['', ...((STATE.config && STATE.config.assetRoles) || [])];
         for (const a of STATE.assets) {
           const tile = ce('div', { class: 'asset-tile' });
           if ((a.mime || '').startsWith('video/')) tile.appendChild(ce('video', { src: a.url, controls: 'controls', playsinline: 'playsinline' }));
           else tile.appendChild(ce('img', { src: a.thumbUrl || a.url, alt: a.filename }));
           tile.appendChild(ce('div', { class: 'muted', style: 'margin-top:6px; word-break:break-all; font-size:.82em;', text: a.filename }));
+          const roleSel = ce('select', { 'aria-label': 'Asset role', style: 'max-width:140px;' },
+            roleOptions.map(r => ce('option', { value: r, selected: a.role === r ? 'selected' : undefined, text: r || 'untagged' }))
+          );
+          const roleStatus = ce('span', { class: 'subtle', style: 'font-size:.78em;' });
+          roleSel.addEventListener('change', async () => {
+            const next = roleSel.value;
+            roleSel.disabled = true;
+            roleStatus.textContent = 'Saving…';
+            try {
+              await api(`/api/assets/${a.id}`, { method: 'PATCH', body: { role: next } });
+              roleStatus.textContent = '';
+              refreshAssets(grid);
+            } catch (e) {
+              roleStatus.textContent = e.message;
+              roleSel.value = a.role || '';
+            } finally {
+              roleSel.disabled = false;
+            }
+          });
           tile.appendChild(ce('div', { class: 'foot' }, [
-            ce('span', { class: 'chip', text: a.role || 'untagged' }),
+            ce('div', { class: 'row', style: 'gap:6px;' }, [roleSel, roleStatus]),
             ce('button', { class: 'btn small danger', onclick: async () => {
               if (!confirm(`Delete "${a.filename}"?`)) return;
               await api(`/api/assets/${a.id}`, { method: 'DELETE' });
@@ -592,6 +612,11 @@
       draft.copy   ||= {};
       draft.features ||= {};
       draft.theme  ||= {};
+      draft.messaging ||= {};
+      draft.guestSegments ||= [];
+      draft.rsvp ||= {};
+      draft.rsvp.fields ||= {};
+      draft.rsvp.statusOptions = Array.isArray(draft.rsvp.statusOptions) ? draft.rsvp.statusOptions : ['Attending', 'Maybe', 'Declined'];
       if (!draft.themePresetActive) draft.themePresetActive = (STATE.config.theme && STATE.config.theme.active) || '';
 
       const status = ce('p', { class: 'form-msg muted', style: 'min-height:1.2em; margin:0;' });
@@ -629,6 +654,7 @@
         ['city', 'City', 'e.g. Hyderabad'],
         ['mapsUrl', 'Google Maps URL', 'https://maps.google.com/...'],
         ['rsvpDeadline', 'RSVP deadline (display)', 'e.g. by Aug 30'],
+        ['rsvpDeadlineISO', 'RSVP deadline (ISO, for lock)', '2024-08-30'],
         ['dressCode', 'Dress code', 'e.g. Traditional Indian'],
         ['giftRegistry', 'Gift registry URL', 'https://...'],
         ['contactEmail', 'Contact email', 'you@example.com'],
@@ -778,6 +804,164 @@
         renderEvents();
       }}, ['+ Add sub-event']));
 
+      // ── RSVP form configuration ───────────────────────────────────────
+      const rsvpCard = ce('div', { class: 'card' }, [
+        ce('h2', { text: 'RSVP form' }),
+        ce('p', { class: 'muted', text: 'Per-field controls, response options, and lock rules. Disabled fields disappear from the public RSVP form.' }),
+      ]);
+      const RSVP_FIELDS = [
+        ['name',      'Your Name',           'name field'],
+        ['partySize', 'Number Attending',    'party size (numeric)'],
+        ['perEvent',  'Which events?',       'per-sub-event picker'],
+        ['dietary',   'Dietary preferences', 'dietary textarea'],
+        ['notes',     'Anything else?',      'free-form notes'],
+      ];
+      const fieldsHost = ce('div', { class: 'grid' });
+      for (const [key, defaultLabel, hint] of RSVP_FIELDS) {
+        draft.rsvp.fields[key] ||= { enabled: false, required: false, label: defaultLabel };
+        const f = draft.rsvp.fields[key];
+        const labelInput = ce('input', { value: f.label || defaultLabel });
+        labelInput.addEventListener('input', () => { f.label = labelInput.value; });
+        const enabledChk = ce('input', { type: 'checkbox' });
+        enabledChk.checked = Boolean(f.enabled);
+        enabledChk.addEventListener('change', () => { f.enabled = enabledChk.checked; });
+        const requiredChk = ce('input', { type: 'checkbox' });
+        requiredChk.checked = Boolean(f.required);
+        requiredChk.addEventListener('change', () => { f.required = requiredChk.checked; });
+        const block = ce('div', { class: 'card', style: 'background: var(--surface2); padding: 12px;' }, [
+          ce('div', { class: 'row', style: 'justify-content:space-between;' }, [
+            ce('strong', { text: defaultLabel }),
+            ce('span', { class: 'subtle', style: 'font-size:.78em;', text: hint }),
+          ]),
+          ce('label', { class: 'field', style: 'flex-direction:row; align-items:center; gap:6px; margin-top:8px;' }, [enabledChk, ' Enabled']),
+          ce('label', { class: 'field', style: 'flex-direction:row; align-items:center; gap:6px;' }, [requiredChk, ' Required']),
+          ce('label', { class: 'field' }, ['Label', labelInput]),
+        ]);
+        if (key === 'partySize') {
+          const maxInput = ce('input', { type: 'number', min: '1', max: '50', value: String(f.max || 10) });
+          maxInput.addEventListener('input', () => { f.max = Math.max(1, Number(maxInput.value) || 10); });
+          block.appendChild(ce('label', { class: 'field' }, ['Max party size', maxInput]));
+        }
+        fieldsHost.appendChild(block);
+      }
+      rsvpCard.appendChild(fieldsHost);
+
+      // Status options repeater
+      rsvpCard.appendChild(ce('h3', { text: 'Response options', style: 'margin-top:18px' }));
+      rsvpCard.appendChild(ce('p', { class: 'muted', style: 'margin-top:0', text: 'The choices a guest sees on the RSVP form. Default: Attending / Maybe / Declined.' }));
+      const statusList = ce('div', { class: 'row', style: 'flex-direction:column; align-items:stretch; gap:6px;' });
+      function renderStatusOptions() {
+        statusList.innerHTML = '';
+        draft.rsvp.statusOptions.forEach((opt, i) => {
+          const inp = ce('input', { value: opt });
+          inp.addEventListener('input', () => { draft.rsvp.statusOptions[i] = inp.value; });
+          const rm = ce('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+            draft.rsvp.statusOptions.splice(i, 1); renderStatusOptions();
+          }}, ['×']);
+          statusList.appendChild(ce('div', { class: 'row', style: 'gap:6px;' }, [inp, rm]));
+        });
+      }
+      renderStatusOptions();
+      rsvpCard.appendChild(statusList);
+      rsvpCard.appendChild(ce('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+        draft.rsvp.statusOptions.push(''); renderStatusOptions();
+      }}, ['+ Add option']));
+
+      // Self-edit + lock-after-deadline
+      rsvpCard.appendChild(ce('h3', { text: 'Lock rules', style: 'margin-top:18px' }));
+      const lockGrid = ce('div', { class: 'grid' });
+      lockGrid.appendChild(checkbox('Allow guests to edit their RSVP after the first submit', draft.rsvp.allowSelfEdit !== false, (v) => { draft.rsvp.allowSelfEdit = v; }));
+      lockGrid.appendChild(checkbox('Close RSVP after the deadline (uses RSVP deadline ISO, falls back to event date ISO)', Boolean(draft.rsvp.lockAfterDeadline), (v) => { draft.rsvp.lockAfterDeadline = v; }));
+      rsvpCard.appendChild(lockGrid);
+
+      // ── Messaging templates ───────────────────────────────────────────
+      const msgCard = ce('div', { class: 'card' }, [
+        ce('h2', { text: 'Messaging templates' }),
+        ce('p', { class: 'muted', text: 'WhatsApp / future email templates. Click a token to insert it at the cursor.' }),
+      ]);
+      const TOKENS = ['{{name}}', '{{eventTitle}}', '{{eventDate}}', '{{inviteUrl}}', '{{rsvpDeadline}}'];
+      function tokenChips(targetTextarea) {
+        const wrap = ce('div', { class: 'row', style: 'gap:6px; margin: 6px 0 0;' });
+        for (const t of TOKENS) {
+          wrap.appendChild(ce('button', {
+            type: 'button', class: 'chip', style: 'cursor:pointer; border:1px solid var(--border);',
+            onclick: () => {
+              const start = targetTextarea.selectionStart ?? targetTextarea.value.length;
+              const end   = targetTextarea.selectionEnd   ?? targetTextarea.value.length;
+              const before = targetTextarea.value.slice(0, start);
+              const after  = targetTextarea.value.slice(end);
+              targetTextarea.value = before + t + after;
+              targetTextarea.dispatchEvent(new Event('input'));
+              targetTextarea.focus();
+              const pos = start + t.length;
+              targetTextarea.setSelectionRange(pos, pos);
+            },
+          }, [t]));
+        }
+        return wrap;
+      }
+      function templateField(label, key, placeholder, helperText) {
+        const ta = ce('textarea', { rows: 3, placeholder });
+        ta.value = draft.messaging[key] || '';
+        ta.addEventListener('input', () => { draft.messaging[key] = ta.value; });
+        const wrap = ce('div', { style: 'margin-top: 10px;' }, [
+          ce('label', { class: 'field' }, [label, ta]),
+          tokenChips(ta),
+        ]);
+        if (helperText) wrap.appendChild(ce('p', { class: 'subtle', style: 'font-size:.78em; margin: 4px 0 0;', text: helperText }));
+        return wrap;
+      }
+      msgCard.appendChild(templateField('Invite message (WhatsApp / share link)', 'inviteTemplate',
+        'Hi {{name}}, you\u2019re invited to {{eventTitle}}{{eventDate}}. Details & RSVP: {{inviteUrl}}'));
+      msgCard.appendChild(templateField('Reminder message (Phase 5 — scheduler not yet wired)', 'reminderTemplate',
+        'Hi {{name}}, reminder to RSVP for {{eventTitle}} by {{rsvpDeadline}}: {{inviteUrl}}',
+        'Editable now so it is ready when scheduled reminders ship.'));
+
+      // ── Guest segments repeater ───────────────────────────────────────
+      const segCard = ce('div', { class: 'card' }, [
+        ce('h2', { text: 'Guest segments' }),
+        ce('p', { class: 'muted', text: 'Optional sub-event groupings (e.g. "Mehendi only"). When a guest has a matching segment, the public invite hides events not in includesEventIds.' }),
+      ]);
+      const segList = ce('div');
+      function renderSegments() {
+        segList.innerHTML = '';
+        draft.guestSegments.forEach((seg, i) => {
+          const row = ce('div', { class: 'card', style: 'background: var(--surface2)' });
+          const grid = ce('div', { class: 'grid' });
+          grid.appendChild(field('ID (a-z, no spaces)', seg.id, (v) => { seg.id = v.toLowerCase().replace(/[^a-z0-9-]/g, '-'); }, { placeholder: 'e.g. mehendi-only' }));
+          grid.appendChild(field('Display label', seg.label, (v) => { seg.label = v; }, { placeholder: 'e.g. Mehendi only' }));
+          row.appendChild(grid);
+
+          const includes = Array.isArray(seg.includesEventIds) ? seg.includesEventIds : (seg.includesEventIds = []);
+          const eventsBox = ce('div', { class: 'row', style: 'flex-wrap:wrap; gap:6px; margin-top:8px;' });
+          if (!draft.events.length) {
+            eventsBox.appendChild(ce('p', { class: 'subtle', text: 'Add sub-events above first.' }));
+          }
+          for (const ev of draft.events) {
+            const id = ev.id || ev.name;
+            if (!id) continue;
+            const cb = ce('input', { type: 'checkbox' });
+            cb.checked = includes.includes(id);
+            cb.addEventListener('change', () => {
+              if (cb.checked) { if (!includes.includes(id)) includes.push(id); }
+              else { const idx = includes.indexOf(id); if (idx >= 0) includes.splice(idx, 1); }
+            });
+            eventsBox.appendChild(ce('label', { class: 'field', style: 'flex-direction:row; align-items:center; gap:4px; font-size:.85em;' }, [cb, ' ', ev.name || id]));
+          }
+          row.appendChild(ce('h3', { text: 'Includes events', style: 'margin-top:10px; font-size:.95rem;' }));
+          row.appendChild(eventsBox);
+
+          row.appendChild(ce('button', { class: 'btn small danger', style: 'margin-top:10px;', onclick: () => { draft.guestSegments.splice(i, 1); renderSegments(); } }, ['Remove']));
+          segList.appendChild(row);
+        });
+      }
+      renderSegments();
+      segCard.appendChild(segList);
+      segCard.appendChild(ce('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+        draft.guestSegments.push({ id: 's' + Date.now(), label: '', includesEventIds: [] });
+        renderSegments();
+      }}, ['+ Add segment']));
+
       // ── Save bar ──────────────────────────────────────────────────────
       const saveBar = ce('div', { class: 'save-bar' });
       const saveBtn = ce('button', { class: 'btn' }, ['Save changes']);
@@ -785,10 +969,16 @@
         saveBtn.disabled = true;
         status.className = 'form-msg muted';
         status.textContent = 'Saving…';
+        // Drop empty status options + segments without ID before saving.
+        draft.rsvp.statusOptions = (draft.rsvp.statusOptions || []).map(s => String(s || '').trim()).filter(Boolean);
+        if (!draft.rsvp.statusOptions.length) draft.rsvp.statusOptions = ['Attending', 'Maybe', 'Declined'];
+        draft.guestSegments = (draft.guestSegments || []).filter(s => s && s.id);
         try {
           await api('/api/config', { method: 'PUT', body: { config: {
             event: draft.event, events: draft.events, hosts: draft.hosts,
             copy: draft.copy, features: draft.features, theme: draft.theme,
+            rsvp: draft.rsvp, messaging: draft.messaging,
+            guestSegments: draft.guestSegments,
             themePresetActive: draft.themePresetActive,
           } } });
           await loadBootstrap();
@@ -811,6 +1001,9 @@
       host.appendChild(copyCard);
       host.appendChild(hostsCard);
       host.appendChild(eventsCard);
+      host.appendChild(rsvpCard);
+      host.appendChild(msgCard);
+      host.appendChild(segCard);
       host.appendChild(featCard);
       host.appendChild(saveBar);
     }

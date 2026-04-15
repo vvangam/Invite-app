@@ -963,6 +963,39 @@ async function countPdfPages(pdfPath) {
   } catch { return 1; }
 }
 
+// Assets: re-tag role (singleton roles get the same delete-then-set treatment
+// as upload time so there is always at most one `hero` / `background`).
+app.patch('/api/assets/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: 'Invalid id' });
+  const { role } = req.body || {};
+  const nextRole = String(role ?? '').trim();
+  if (nextRole && !CONFIG.assetRoles.includes(nextRole)) {
+    return res.status(400).json({ ok: false, error: `Unknown role: ${nextRole}. Allowed: ${CONFIG.assetRoles.concat(['']).join(', ')}` });
+  }
+  const row = await dbGet(`SELECT * FROM assets WHERE id=?`, `SELECT * FROM assets WHERE id=$1`, [id]);
+  if (!row) return res.status(404).json({ ok: false, error: 'Not found' });
+
+  try {
+    if (nextRole === 'hero' || nextRole === 'background') {
+      await dbRun(
+        `DELETE FROM assets WHERE role=? AND id<>?`,
+        `DELETE FROM assets WHERE role=$1 AND id<>$2`,
+        [nextRole, id]
+      );
+    }
+    await dbRun(
+      `UPDATE assets SET role=? WHERE id=?`,
+      `UPDATE assets SET role=$1 WHERE id=$2`,
+      [nextRole, id]
+    );
+    const updated = await dbGet(`SELECT * FROM assets WHERE id=?`, `SELECT * FROM assets WHERE id=$1`, [id]);
+    res.json({ ok: true, asset: assetToPublic(updated) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Assets: delete
 app.delete('/api/assets/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);

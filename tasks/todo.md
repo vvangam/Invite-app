@@ -50,23 +50,26 @@ worse than missing — they invite trust bugs.
   IP for 60 minutes — outlasts the per-minute rate-limit bucket. Cleared on
   successful login.
 
-## Phase 2 — Settings editor completeness (1 day)
+## Phase 2 — Settings editor completeness (1 day) ✅
 
 Right now the admin UI lets you edit ~70% of `config.js`. Expose the
 rest — these are features that already work but require shell access.
 
-- [ ] **`messaging.*` editor** — two textareas (invite / reminder
-  templates) with token chip helpers (`{{name}} {{eventTitle}} {{inviteUrl}} {{rsvpDeadline}}`).
-- [ ] **`rsvp.fields.*` editor** — per field: enabled / required / label /
+- [x] **`messaging.*` editor** — two textareas (invite / reminder
+  templates) with token chip helpers (`{{name}} {{eventTitle}} {{eventDate}} {{inviteUrl}} {{rsvpDeadline}}`).
+  Click a chip to insert the token at the cursor.
+- [x] **`rsvp.fields.*` editor** — per field: enabled / required / label /
   max (for partySize). Replaces the implicit "publicRsvp toggles all
   fields" model.
-- [ ] **`rsvp.statusOptions[]` editor** — string list, default
-  `['Attending','Maybe','Declined']`.
-- [ ] **`rsvp.allowSelfEdit / lockAfterDeadline` checkboxes**.
-- [ ] **`guestSegments[]` editor** — repeater: label + multi-select
+- [x] **`rsvp.statusOptions[]` editor** — string list, empties filtered on save,
+  falls back to `['Attending','Maybe','Declined']` if cleared.
+- [x] **`rsvp.allowSelfEdit / lockAfterDeadline` checkboxes** — already enforced
+  server-side by Phase 1; now editable from the UI.
+- [x] **`guestSegments[]` editor** — repeater: id + label + multi-select
   sub-events from `events[]`. Persists to `config_overrides`.
-- [ ] **Asset role re-tag**: `PATCH /api/assets/:id { role }` + dropdown
-  on each asset tile.
+- [x] **Asset role re-tag**: `PATCH /api/assets/:id { role }` + dropdown
+  on each asset tile. Singleton roles (`hero`, `background`) evict the old
+  holder on switch, same as upload time.
 
 ## Phase 3 — Guest experience: from invite-card to mini-site (2 days)
 
